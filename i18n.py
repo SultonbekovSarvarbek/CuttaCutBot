@@ -201,6 +201,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "❌ A video note can be at most 60 seconds long.",
         "uz": "❌ Doira video ko'pi bilan 60 soniya bo'lishi mumkin.",
     },
+    "gif_button": {
+        "ru": "🎞 GIF",
+        "en": "🎞 GIF",
+        "uz": "🎞 GIF",
+    },
+    "making_gif": {
+        "ru": "🎞 Делаю гифку…",
+        "en": "🎞 Making the GIF…",
+        "uz": "🎞 GIF tayyorlayapman…",
+    },
+    "gif_too_long": {
+        "ru": "❌ Гифка может быть не длиннее 60 секунд.",
+        "en": "❌ A GIF can be at most 60 seconds long.",
+        "uz": "❌ GIF ko'pi bilan 60 soniya bo'lishi mumkin.",
+    },
     "extracting_audio": {
         "ru": "🎵 Извлекаю аудио…",
         "en": "🎵 Extracting the audio…",

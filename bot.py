@@ -42,6 +42,7 @@ from downloader import (
     extract_audio,
     file_size_mb,
     get_video_info,
+    make_gif,
     make_video_note,
 )
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
@@ -69,7 +70,9 @@ QUALITY_OPTIONS = [360, 480, 720]
 
 # Лимит Telegram на длину «кружочка» (video note), секунд.
 NOTE_MAX_SECONDS = 60
-# Качество исходника для кружочка (итог всё равно 512×512).
+# Лимит длины гифки (чтобы файлы оставались лёгкими), секунд.
+GIF_MAX_SECONDS = 60
+# Качество исходника для кружочка и гифки.
 NOTE_SOURCE_HEIGHT = 480
 
 logging.basicConfig(
@@ -207,7 +210,10 @@ def quality_keyboard(lang: str, allow_note: bool) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=t(lang, "note_button"), callback_data="quality:note"
-                )
+                ),
+                InlineKeyboardButton(
+                    text=t(lang, "gif_button"), callback_data="quality:gif"
+                ),
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -377,7 +383,8 @@ async def handle_quality(callback: CallbackQuery) -> None:
     lang = get_lang(callback.from_user)
     choice = callback.data.split(":", 1)[1]
     is_note = choice == "note"
-    height = NOTE_SOURCE_HEIGHT if is_note else int(choice)
+    is_gif = choice == "gif"
+    height = NOTE_SOURCE_HEIGHT if (is_note or is_gif) else int(choice)
 
     # pop, а не get: повторное нажатие кнопки не запустит второе скачивание,
     # а новый запрос пользователя, пришедший во время скачивания, не пострадает.
@@ -386,11 +393,14 @@ async def handle_quality(callback: CallbackQuery) -> None:
         await callback.answer(t(lang, "stale_request"), show_alert=True)
         return
 
-    # Кнопка «кружочек» показывается только для коротких отрезков, но запрос
-    # мог смениться, пока на экране была старая клавиатура — перепроверяем.
-    if is_note and request.end - request.start > NOTE_MAX_SECONDS:
+    # Кнопки «кружочек»/«GIF» показываются только для коротких отрезков, но
+    # запрос мог смениться, пока на экране была старая клавиатура — перепроверяем.
+    if (is_note or is_gif) and request.end - request.start > NOTE_MAX_SECONDS:
         pending[user_id] = request  # вернуть, выбор качества ещё актуален
-        await callback.answer(t(lang, "note_too_long"), show_alert=True)
+        await callback.answer(
+            t(lang, "note_too_long" if is_note else "gif_too_long"),
+            show_alert=True,
+        )
         return
 
     await callback.answer()
@@ -459,6 +469,12 @@ async def handle_quality(callback: CallbackQuery) -> None:
     await status.edit_text(t(lang, "uploading", size=f"{size_mb:.0f}"))
 
     try:
+        clip_range = (
+            f"{format_seconds(request.start)}–{format_seconds(request.end)}"
+        )
+        # В подписи — только название видео (если его удалось узнать).
+        title_caption = f"<b>{_escape(title[:200])}</b>" if title else None
+
         # Режим кружочка: квадратное видео без подписи, аудио не прикладываем.
         if is_note:
             await status.edit_text(t(lang, "making_note"))
@@ -476,11 +492,27 @@ async def handle_quality(callback: CallbackQuery) -> None:
             logger.info("Note sent OK: user=%s", user_id)
             return
 
-        clip_range = (
-            f"{format_seconds(request.start)}–{format_seconds(request.end)}"
-        )
-        # В подписи — только название видео (если его удалось узнать).
-        title_caption = f"<b>{_escape(title[:200])}</b>" if title else None
+        # Режим гифки: тот же клип без звука, Telegram покажет как GIF.
+        if is_gif:
+            await status.edit_text(t(lang, "making_gif"))
+            gif_path = await make_gif(result.path)
+            if gif_path is None or file_size_mb(gif_path) > MAX_FILE_MB:
+                logger.error("GIF failed: user=%s", user_id)
+                await status.edit_text(
+                    t(lang, "download_failed", error=t(lang, "unknown_error"))
+                )
+                stats.track(user_id, "download_fail")
+                return
+            await callback.message.answer_animation(
+                FSInputFile(
+                    gif_path, filename=f"{_safe_filename(title) or 'clip'}.mp4"
+                ),
+                caption=f"🎞 {title_caption}" if title_caption else None,
+            )
+            await status.edit_text(t(lang, "done"))
+            stats.track(user_id, "download_ok")
+            logger.info("GIF sent OK: user=%s", user_id)
+            return
 
         video = FSInputFile(result.path)
         await callback.message.answer_video(

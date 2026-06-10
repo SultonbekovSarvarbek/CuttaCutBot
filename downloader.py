@@ -261,6 +261,40 @@ async def make_video_note(video_path: Path, timeout: int = 180) -> Path | None:
     return note_path
 
 
+async def make_gif(video_path: Path, timeout: int = 120) -> Path | None:
+    """Делает «гифку» для Telegram: тот же клип, но без звуковой дорожки.
+
+    Telegram показывает mp4 без аудио, отправленный как animation,
+    в виде зацикленной гифки. Видеопоток копируется без перекодирования,
+    поэтому операция почти мгновенная.
+    """
+    gif_path = video_path.with_name("animation.mp4")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(video_path),
+        "-an",                  # выбросить звук
+        "-c:v", "copy",
+        "-movflags", "+faststart",
+        str(gif_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    if proc.returncode != 0 or not gif_path.exists():
+        return None
+    return gif_path
+
+
 def cleanup(tmp_dir: Path) -> None:
     """Удаляет временную папку запроса вместе со всем содержимым."""
     shutil.rmtree(tmp_dir, ignore_errors=True)

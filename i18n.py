@@ -123,6 +123,20 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "📐 Clip: <b>{start} – {end}</b> ({duration})\n\nChoose the quality:",
         "uz": "📐 Parcha: <b>{start} – {end}</b> ({duration})\n\nSifatni tanlang:",
     },
+    "beyond_video": {
+        "ru": (
+            "❌ Отрезок начинается за концом видео — его длина всего "
+            "<b>{length}</b>.\nПришли ссылку и таймкоды заново."
+        ),
+        "en": (
+            "❌ The clip starts after the video ends — it is only "
+            "<b>{length}</b> long.\nSend the link and timecodes again."
+        ),
+        "uz": (
+            "❌ Parcha video tugaganidan keyin boshlanadi — video bor-yo'g'i "
+            "<b>{length}</b>.\nHavola va taym-kodlarni qaytadan yuboring."
+        ),
+    },
     "stale_request": {
         "ru": "Запрос устарел, пришли ссылку заново.",
         "en": "This request has expired, send the link again.",

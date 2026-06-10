@@ -39,6 +39,37 @@ class DownloadResult:
     timed_out: bool = False
 
 
+async def get_duration(url: str) -> int | None:
+    """Узнаёт длину видео в секундах (без скачивания).
+
+    Возвращает None, если выяснить не удалось (живой эфир, ошибка сети
+    и т.п.) — в этом случае скачивание просто идёт без проверки границ.
+    """
+    cmd = ["yt-dlp", "--no-playlist", "--skip-download", "--print", "duration"]
+    if COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(url)
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    if proc.returncode != 0:
+        return None
+    try:
+        return int(float(stdout_bytes.decode().strip().splitlines()[0]))
+    except (ValueError, IndexError):
+        return None
+
+
 def _format_section(start: int, end: int) -> str:
     """Преобразует секунды в строку диапазона для --download-sections.
 

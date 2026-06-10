@@ -36,7 +36,7 @@ from aiogram.types import (
 )
 
 import stats
-from downloader import cleanup, download_section, file_size_mb
+from downloader import cleanup, download_section, file_size_mb, get_duration
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
 
 # ---------------------------------------------------------------------------
@@ -372,6 +372,18 @@ async def handle_quality(callback: CallbackQuery) -> None:
     async with download_semaphore:
         # Редактируем одно и то же сообщение по мере прогресса.
         await status.edit_text(t(lang, "downloading", height=height))
+
+        # Сверяем отрезок с реальной длиной видео, чтобы ffmpeg не падал
+        # на диапазоне за концом ролика.
+        video_len = await get_duration(request.url)
+        if video_len:
+            if request.start >= video_len:
+                await status.edit_text(
+                    t(lang, "beyond_video", length=format_seconds(video_len))
+                )
+                return
+            if request.end > video_len:
+                request.end = video_len
 
         logger.info(
             "Download start: user=%s url=%s %s-%s %sp",

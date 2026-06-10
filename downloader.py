@@ -39,13 +39,20 @@ class DownloadResult:
     timed_out: bool = False
 
 
-async def get_duration(url: str) -> int | None:
-    """Узнаёт длину видео в секундах (без скачивания).
+async def get_video_info(url: str) -> tuple[str | None, int | None]:
+    """Узнаёт название и длину видео в секундах (без скачивания).
 
-    Возвращает None, если выяснить не удалось (живой эфир, ошибка сети
-    и т.п.) — в этом случае скачивание просто идёт без проверки границ.
+    Возвращает (title, duration); каждое поле может быть None, если
+    выяснить не удалось (живой эфир, ошибка сети и т.п.) — в этом случае
+    бот просто работает без названия / без проверки границ.
     """
-    cmd = ["yt-dlp", "--no-playlist", "--skip-download", "--print", "duration"]
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--skip-download",
+        "--print", "title",
+        "--print", "duration",
+    ]
     if COOKIES_FILE.exists():
         cmd += ["--cookies", str(COOKIES_FILE)]
     cmd.append(url)
@@ -60,14 +67,18 @@ async def get_duration(url: str) -> int | None:
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        return None
+        return None, None
 
     if proc.returncode != 0:
-        return None
+        return None, None
+
+    lines = stdout_bytes.decode("utf-8", errors="replace").strip().splitlines()
+    title = lines[0].strip() or None if lines else None
     try:
-        return int(float(stdout_bytes.decode().strip().splitlines()[0]))
+        duration = int(float(lines[1]))
     except (ValueError, IndexError):
-        return None
+        duration = None
+    return title, duration
 
 
 def _format_section(start: int, end: int) -> str:

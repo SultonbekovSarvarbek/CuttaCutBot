@@ -41,7 +41,7 @@ from downloader import (
     download_section,
     extract_audio,
     file_size_mb,
-    get_duration,
+    get_video_info,
 )
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
 
@@ -379,9 +379,9 @@ async def handle_quality(callback: CallbackQuery) -> None:
         # Редактируем одно и то же сообщение по мере прогресса.
         await status.edit_text(t(lang, "downloading", height=height))
 
-        # Сверяем отрезок с реальной длиной видео, чтобы ffmpeg не падал
-        # на диапазоне за концом ролика.
-        video_len = await get_duration(request.url)
+        # Название пойдёт в подписи, длина — для проверки границ отрезка,
+        # чтобы ffmpeg не падал на диапазоне за концом ролика.
+        title, video_len = await get_video_info(request.url)
         if video_len:
             if request.start >= video_len:
                 await status.edit_text(
@@ -437,20 +437,26 @@ async def handle_quality(callback: CallbackQuery) -> None:
         clip_range = (
             f"{format_seconds(request.start)}–{format_seconds(request.end)}"
         )
+        # Название видео (если удалось узнать) — первой строкой подписи.
+        title_line = f"<b>{_escape(title[:200])}</b>\n" if title else ""
+
         video = FSInputFile(result.path)
         await callback.message.answer_video(
             video,
-            caption=f"✂️ {clip_range} · {height}p",
+            caption=f"✂️ {title_line}{clip_range} · {height}p",
         )
 
         # Следом — аудиодорожка этого же отрезка отдельным файлом.
         await status.edit_text(t(lang, "extracting_audio"))
         audio_path = await extract_audio(result.path)
         if audio_path and file_size_mb(audio_path) <= MAX_FILE_MB:
-            audio = FSInputFile(audio_path, filename=f"clip_{clip_range}.mp3")
+            audio = FSInputFile(
+                audio_path, filename=f"{_safe_filename(title) or 'clip'}.mp3"
+            )
             await callback.message.answer_audio(
                 audio,
-                caption=f"🎵 {clip_range}",
+                caption=f"🎵 {title_line}{clip_range}",
+                title=title or clip_range,
             )
         elif audio_path is None:
             # Не критично: видео уже у пользователя, просто логируем.
@@ -470,6 +476,14 @@ async def handle_quality(callback: CallbackQuery) -> None:
 def _escape(text: str) -> str:
     """Экранирует HTML-спецсимволы для вывода в <code>."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _safe_filename(title: str | None) -> str:
+    """Превращает название видео в безопасное имя файла."""
+    if not title:
+        return ""
+    cleaned = re.sub(r'[\\/:*?"<>|]', "", title).strip()
+    return cleaned[:60]
 
 
 # ---------------------------------------------------------------------------

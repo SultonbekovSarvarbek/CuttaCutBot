@@ -216,6 +216,59 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "❌ A GIF can be at most 60 seconds long.",
         "uz": "❌ GIF ko'pi bilan 60 soniya bo'lishi mumkin.",
     },
+    "inline_help_title": {
+        "ru": "✂️ Как вырезать клип",
+        "en": "✂️ How to cut a clip",
+        "uz": "✂️ Parchani qanday kesish",
+    },
+    "inline_help_desc": {
+        "ru": "Напиши: ссылка 1:17 1:25",
+        "en": "Type: link 1:17 1:25",
+        "uz": "Yozing: havola 1:17 1:25",
+    },
+    "inline_help_msg": {
+        "ru": (
+            "✂️ Вырезать клип в любом чате:\n"
+            "<code>@{bot} ссылка 1:17 1:25</code>"
+        ),
+        "en": (
+            "✂️ Cut a clip in any chat:\n"
+            "<code>@{bot} link 1:17 1:25</code>"
+        ),
+        "uz": (
+            "✂️ Istalgan chatda parcha kesish:\n"
+            "<code>@{bot} havola 1:17 1:25</code>"
+        ),
+    },
+    "inline_cut_title": {
+        "ru": "✂️ Вырезать {range}",
+        "en": "✂️ Cut {range}",
+        "uz": "✂️ {range} kesish",
+    },
+    "inline_cut_desc": {
+        "ru": "Клип придёт прямо в этот чат",
+        "en": "The clip will be sent to this chat",
+        "uz": "Parcha shu chatga yuboriladi",
+    },
+    "inline_preparing": {
+        "ru": "⏳ Готовлю клип {range}…",
+        "en": "⏳ Preparing the clip {range}…",
+        "uz": "⏳ {range} parchasini tayyorlayapman…",
+    },
+    "inline_need_start": {
+        "ru": (
+            "❌ Чтобы пользоваться inline-режимом, сначала открой @{bot} "
+            "и нажми Start, потом повтори."
+        ),
+        "en": (
+            "❌ To use inline mode, open @{bot} and press Start first, "
+            "then try again."
+        ),
+        "uz": (
+            "❌ Inline rejimdan foydalanish uchun avval @{bot} botini ochib "
+            "Start bosing, keyin qaytadan urinib ko'ring."
+        ),
+    },
     "extracting_audio": {
         "ru": "🎵 Извлекаю аудио…",
         "en": "🎵 Extracting the audio…",

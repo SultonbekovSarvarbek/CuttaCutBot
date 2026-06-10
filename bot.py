@@ -28,9 +28,14 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
+    ChosenInlineResult,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InputMediaVideo,
+    InputTextMessageContent,
     Message,
     User,
 )
@@ -74,6 +79,11 @@ NOTE_MAX_SECONDS = 60
 GIF_MAX_SECONDS = 60
 # Качество исходника для кружочка и гифки.
 NOTE_SOURCE_HEIGHT = 480
+# Качество клипа в inline-режиме (без выбора кнопками).
+INLINE_HEIGHT = 480
+
+# Username бота (заполняется при старте, нужен для inline-подсказок).
+BOT_USERNAME = ""
 
 logging.basicConfig(
     level=logging.INFO,
@@ -547,6 +557,147 @@ async def handle_quality(callback: CallbackQuery) -> None:
         cleanup(result.tmp_dir)
 
 
+# ---------------------------------------------------------------------------
+# Inline-режим: @bot ссылка 1:17 1:25 в любом чате
+# ---------------------------------------------------------------------------
+@dp.inline_query()
+async def handle_inline(query: InlineQuery) -> None:
+    """Мгновенный ответ на inline-запрос: карточка «Вырезать» или подсказка."""
+    lang = get_lang(query.from_user)
+    parsed = parse_message(query.query or "")
+
+    valid = (
+        parsed is not None
+        and parsed.end > parsed.start
+        and parsed.end - parsed.start <= MAX_CLIP_SECONDS
+    )
+    if not valid:
+        help_result = InlineQueryResultArticle(
+            id="help",
+            title=t(lang, "inline_help_title"),
+            description=t(lang, "inline_help_desc"),
+            input_message_content=InputTextMessageContent(
+                message_text=t(lang, "inline_help_msg", bot=BOT_USERNAME),
+            ),
+        )
+        await query.answer([help_result], cache_time=5, is_personal=True)
+        return
+
+    clip_range = f"{format_seconds(parsed.start)}–{format_seconds(parsed.end)}"
+    # Клавиатура обязательна: без неё Telegram не пришлёт inline_message_id,
+    # и заглушку будет нечем заменить на готовое видео.
+    placeholder_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⏳", callback_data="noop")]]
+    )
+    cut_result = InlineQueryResultArticle(
+        id="clip",
+        title=t(lang, "inline_cut_title", range=clip_range),
+        description=t(lang, "inline_cut_desc"),
+        input_message_content=InputTextMessageContent(
+            message_text=t(lang, "inline_preparing", range=clip_range),
+        ),
+        reply_markup=placeholder_kb,
+    )
+    await query.answer([cut_result], cache_time=5, is_personal=True)
+
+
+@dp.callback_query(F.data == "noop")
+async def handle_noop(callback: CallbackQuery) -> None:
+    """Кнопка-заглушка «⏳» в inline-сообщении — просто гасим спиннер."""
+    await callback.answer()
+
+
+@dp.chosen_inline_result()
+async def handle_chosen(chosen: ChosenInlineResult, bot: Bot) -> None:
+    """Пользователь отправил inline-карточку: качаем клип и подменяем заглушку."""
+    imid = chosen.inline_message_id
+    if chosen.result_id != "clip" or not imid:
+        return
+
+    lang = get_lang(chosen.from_user)
+    user_id = chosen.from_user.id
+    parsed = parse_message(chosen.query)
+    if parsed is None:
+        return
+
+    stats.track(user_id, "request")
+    logger.info("Inline request: user=%s query=%r", user_id, chosen.query)
+    request = PendingRequest(url=parsed.url, start=parsed.start, end=parsed.end)
+
+    async def fail(text: str) -> None:
+        try:
+            await bot.edit_message_text(inline_message_id=imid, text=text)
+        except Exception:  # noqa: BLE001
+            logger.exception("Inline edit failed: user=%s", user_id)
+
+    async with download_semaphore:
+        title, video_len = await get_video_info(request.url)
+        if video_len:
+            if request.start >= video_len:
+                await fail(t(lang, "beyond_video", length=format_seconds(video_len)))
+                return
+            if request.end > video_len:
+                request.end = video_len
+
+        result = await download_section(
+            url=request.url,
+            start=request.start,
+            end=request.end,
+            height=INLINE_HEIGHT,
+            max_height=MAX_HEIGHT,
+            timeout=DOWNLOAD_TIMEOUT,
+        )
+
+    if not result.ok:
+        stats.track(user_id, "download_fail")
+        if result.timed_out:
+            err = t(lang, "download_timeout", timeout=DOWNLOAD_TIMEOUT)
+        else:
+            err = result.stderr[-200:] if result.stderr else t(lang, "unknown_error")
+        await fail(t(lang, "download_failed", error=_escape(err)))
+        return
+
+    try:
+        size_mb = file_size_mb(result.path)
+        if size_mb > MAX_FILE_MB:
+            await fail(t(lang, "too_big", size=f"{size_mb:.0f}", limit=MAX_FILE_MB))
+            return
+
+        title_caption = f"<b>{_escape(title[:200])}</b>" if title else None
+        caption = f"✂️ {title_caption}" if title_caption else None
+
+        # Inline-сообщение можно заменить видео только по file_id, поэтому
+        # сначала тихо загружаем файл в личку автора запроса и сразу удаляем.
+        try:
+            upload = await bot.send_video(
+                chat_id=user_id,
+                video=FSInputFile(result.path),
+                caption=caption,
+                disable_notification=True,
+            )
+        except Exception:  # noqa: BLE001 — почти всегда «бот не запущен»
+            logger.warning("Inline upload failed: user=%s (no PM?)", user_id)
+            await fail(t(lang, "inline_need_start", bot=BOT_USERNAME))
+            return
+
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=upload.message_id)
+        except Exception:  # noqa: BLE001 — не критично, файл уже загружен
+            pass
+
+        await bot.edit_message_media(
+            inline_message_id=imid,
+            media=InputMediaVideo(media=upload.video.file_id, caption=caption),
+        )
+        stats.track(user_id, "download_ok")
+        logger.info("Inline sent OK: user=%s size=%.1fMB", user_id, size_mb)
+    except Exception:  # noqa: BLE001
+        logger.exception("Inline failed: user=%s", user_id)
+        await fail(t(lang, "send_failed", error=t(lang, "unknown_error")))
+    finally:
+        cleanup(result.tmp_dir)
+
+
 def _escape(text: str) -> str:
     """Экранирует HTML-спецсимволы для вывода в <code>."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -582,10 +733,15 @@ async def main() -> None:
     else:
         bot = Bot(token=BOT_TOKEN, default=default)
 
+    # Username нужен для подсказок в inline-режиме.
+    global BOT_USERNAME
+    me = await bot.get_me()
+    BOT_USERNAME = me.username or ""
+
     logger.info(
-        "Bot starting | MAX_FILE_MB=%s MAX_HEIGHT=%s MAX_CLIP=%ss "
+        "Bot starting | @%s MAX_FILE_MB=%s MAX_HEIGHT=%s MAX_CLIP=%ss "
         "TIMEOUT=%ss CONCURRENT=%s api=%s",
-        MAX_FILE_MB, MAX_HEIGHT, MAX_CLIP_SECONDS,
+        BOT_USERNAME, MAX_FILE_MB, MAX_HEIGHT, MAX_CLIP_SECONDS,
         DOWNLOAD_TIMEOUT, MAX_CONCURRENT_DOWNLOADS, TELEGRAM_API_URL or "official",
     )
     await dp.start_polling(bot)

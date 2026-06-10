@@ -186,6 +186,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "📤 Uploading… ({size} MB)",
         "uz": "📤 Yuboryapman… ({size} MB)",
     },
+    "extracting_audio": {
+        "ru": "🎵 Извлекаю аудио…",
+        "en": "🎵 Extracting the audio…",
+        "uz": "🎵 Audioni ajratyapman…",
+    },
     "done": {
         "ru": "✅ Готово!",
         "en": "✅ Done!",

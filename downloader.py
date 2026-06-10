@@ -180,6 +180,39 @@ async def download_section(
     return DownloadResult(ok=True, path=mp4_files[0], tmp_dir=tmp_dir, stderr=stderr)
 
 
+async def extract_audio(video_path: Path, timeout: int = 180) -> Path | None:
+    """Извлекает аудиодорожку из готового клипа в mp3 (кладёт рядом).
+
+    Возвращает путь к mp3 либо None, если извлечь не удалось — это не
+    критично, видео к этому моменту уже отправлено.
+    """
+    audio_path = video_path.with_suffix(".mp3")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(video_path),
+        "-vn",                      # без видеопотока
+        "-codec:a", "libmp3lame",
+        "-q:a", "4",                # VBR ~165 кбит/с — достаточно для речи и музыки
+        str(audio_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    if proc.returncode != 0 or not audio_path.exists():
+        return None
+    return audio_path
+
+
 def cleanup(tmp_dir: Path) -> None:
     """Удаляет временную папку запроса вместе со всем содержимым."""
     shutil.rmtree(tmp_dir, ignore_errors=True)

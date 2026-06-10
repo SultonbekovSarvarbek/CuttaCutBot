@@ -36,7 +36,13 @@ from aiogram.types import (
 )
 
 import stats
-from downloader import cleanup, download_section, file_size_mb, get_duration
+from downloader import (
+    cleanup,
+    download_section,
+    extract_audio,
+    file_size_mb,
+    get_duration,
+)
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
 
 # ---------------------------------------------------------------------------
@@ -428,14 +434,28 @@ async def handle_quality(callback: CallbackQuery) -> None:
     await status.edit_text(t(lang, "uploading", size=f"{size_mb:.0f}"))
 
     try:
+        clip_range = (
+            f"{format_seconds(request.start)}–{format_seconds(request.end)}"
+        )
         video = FSInputFile(result.path)
         await callback.message.answer_video(
             video,
-            caption=(
-                f"✂️ {format_seconds(request.start)}–"
-                f"{format_seconds(request.end)} · {height}p"
-            ),
+            caption=f"✂️ {clip_range} · {height}p",
         )
+
+        # Следом — аудиодорожка этого же отрезка отдельным файлом.
+        await status.edit_text(t(lang, "extracting_audio"))
+        audio_path = await extract_audio(result.path)
+        if audio_path and file_size_mb(audio_path) <= MAX_FILE_MB:
+            audio = FSInputFile(audio_path, filename=f"clip_{clip_range}.mp3")
+            await callback.message.answer_audio(
+                audio,
+                caption=f"🎵 {clip_range}",
+            )
+        elif audio_path is None:
+            # Не критично: видео уже у пользователя, просто логируем.
+            logger.warning("Audio extraction failed: user=%s", user_id)
+
         await status.edit_text(t(lang, "done"))
         stats.track(user_id, "download_ok")
         logger.info("Sent OK: user=%s size=%.1fMB", user_id, size_mb)

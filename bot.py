@@ -35,6 +35,7 @@ from aiogram.types import (
     User,
 )
 
+import stats
 from downloader import cleanup, download_section, file_size_mb
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
 
@@ -47,6 +48,10 @@ MAX_HEIGHT: int = int(os.getenv("MAX_HEIGHT", "720"))
 MAX_CLIP_SECONDS: int = int(os.getenv("MAX_CLIP_SECONDS", str(15 * 60)))
 DOWNLOAD_TIMEOUT: int = int(os.getenv("DOWNLOAD_TIMEOUT", str(10 * 60)))
 MAX_CONCURRENT_DOWNLOADS: int = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2"))
+
+# Telegram user id владельца бота — только ему доступна команда /stats.
+# Свой id можно узнать, написав @userinfobot.
+ADMIN_ID: int = int(os.getenv("ADMIN_ID", "0"))
 
 # URL локального Telegram Bot API server (если поднят) — для снятия лимита 50 МБ.
 # Пусто = используется официальный api.telegram.org.
@@ -209,6 +214,7 @@ dp = Dispatcher()
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     """Первый запуск — выбор языка, дальше — инструкция."""
+    stats.track(message.from_user.id, "start")
     if message.from_user.id not in user_lang:
         await message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
         return
@@ -219,6 +225,28 @@ async def cmd_start(message: Message) -> None:
 async def cmd_lang(message: Message) -> None:
     """Смена языка."""
     await message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
+
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message) -> None:
+    """Статистика использования — только для владельца бота (ADMIN_ID)."""
+    if not ADMIN_ID or message.from_user.id != ADMIN_ID:
+        return  # для остальных команда просто молчит
+
+    s = stats.summary()
+    await message.answer(
+        "📊 <b>Статистика бота</b>\n\n"
+        "👥 Пользователи:\n"
+        f"  за 24 часа: <b>{s['users_day']}</b>\n"
+        f"  за 7 дней: <b>{s['users_week']}</b>\n"
+        f"  всего: <b>{s['users_total']}</b>\n\n"
+        "🎬 Готовые клипы:\n"
+        f"  за 24 часа: <b>{s['clips_day']}</b>\n"
+        f"  за 7 дней: <b>{s['clips_week']}</b>\n"
+        f"  всего: <b>{s['clips_total']}</b>\n\n"
+        f"📨 Запросов всего: <b>{s['requests_total']}</b>\n"
+        f"❌ Ошибок скачивания: <b>{s['fails_total']}</b>"
+    )
 
 
 @dp.callback_query(F.data.startswith("lang:"))
@@ -260,6 +288,7 @@ async def ask_quality(
         return False
 
     pending[message.from_user.id] = PendingRequest(url=url, start=start, end=end)
+    stats.track(message.from_user.id, "request")
     await message.answer(
         t(
             lang,
@@ -365,6 +394,7 @@ async def handle_quality(callback: CallbackQuery) -> None:
         else:
             tail = result.stderr[-500:] if result.stderr else t(lang, "unknown_error")
         logger.error("Download failed: user=%s err=%s", user_id, result.stderr)
+        stats.track(user_id, "download_fail")
         await status.edit_text(t(lang, "download_failed", error=_escape(tail)))
         return
 
@@ -395,6 +425,7 @@ async def handle_quality(callback: CallbackQuery) -> None:
             ),
         )
         await status.edit_text(t(lang, "done"))
+        stats.track(user_id, "download_ok")
         logger.info("Sent OK: user=%s size=%.1fMB", user_id, size_mb)
     except Exception as exc:  # noqa: BLE001 — логируем любую ошибку отправки
         logger.exception("Send failed: user=%s", user_id)

@@ -99,24 +99,27 @@ YouTube иногда требует подтверждения, что вы не
 
 ## Автозапуск через systemd
 
-В папке `deploy/` лежит готовый юнит `clipbot.service`.
+Самый простой способ — скрипт установки. Он сам подставит путь к проекту
+и текущего пользователя, включит автозапуск при загрузке сервера и
+авторестарт при падении:
 
 ```bash
-# Скопируй проект в /opt/clipbot (или поправь пути в юните)
-sudo cp deploy/clipbot.service /etc/systemd/system/clipbot.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now clipbot
-sudo systemctl status clipbot
-journalctl -u clipbot -f   # смотреть логи
+cd ~/CuttaCutBot          # корень проекта (где bot.py)
+sudo bash deploy/install.sh
 ```
 
-Перед этим создай пользователя и положи `.env` рядом:
+Полезные команды после установки:
 
 ```bash
-sudo useradd -r -s /usr/sbin/nologin clipbot
-sudo mkdir -p /opt/clipbot
-# скопируй файлы проекта, создай venv, положи .env
+systemctl status clipbot          # состояние
+journalctl -u clipbot -f          # логи в реальном времени
+sudo systemctl restart clipbot    # перезапуск (после git pull)
+sudo systemctl stop clipbot       # остановить
 ```
+
+Альтернатива вручную: в `deploy/clipbot.service` лежит шаблон юнита под
+`/opt/clipbot` и пользователя `clipbot` — поправь пути и скопируй в
+`/etc/systemd/system/` сам.
 
 ---
 

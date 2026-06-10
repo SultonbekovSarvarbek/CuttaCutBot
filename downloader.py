@@ -25,16 +25,18 @@ COOKIES_FILE = Path(__file__).parent / "cookies.txt"
 class DownloadResult:
     """Результат скачивания.
 
-    ok       — успешно ли скачалось;
-    path     — путь к готовому mp4 (если ok);
-    tmp_dir  — временная папка запроса (её нужно удалить после отправки);
-    stderr   — текст ошибки от yt-dlp (если не ok).
+    ok        — успешно ли скачалось;
+    path      — путь к готовому mp4 (если ok);
+    tmp_dir   — временная папка запроса (её нужно удалить после отправки);
+    stderr    — текст ошибки от yt-dlp (если не ok);
+    timed_out — True, если скачивание прервано по таймауту.
     """
 
     ok: bool
     path: Path | None
     tmp_dir: Path
     stderr: str = ""
+    timed_out: bool = False
 
 
 def _format_section(start: int, end: int) -> str:
@@ -120,7 +122,7 @@ async def download_section(
             ok=False,
             path=None,
             tmp_dir=tmp_dir,
-            stderr=f"Скачивание не уложилось в {timeout} с и было прервано.",
+            timed_out=True,
         )
     stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
 

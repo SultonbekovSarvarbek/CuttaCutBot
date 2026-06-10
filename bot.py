@@ -437,13 +437,13 @@ async def handle_quality(callback: CallbackQuery) -> None:
         clip_range = (
             f"{format_seconds(request.start)}–{format_seconds(request.end)}"
         )
-        # Название видео (если удалось узнать) — первой строкой подписи.
-        title_line = f"<b>{_escape(title[:200])}</b>\n" if title else ""
+        # В подписи — только название видео (если его удалось узнать).
+        title_caption = f"<b>{_escape(title[:200])}</b>" if title else None
 
         video = FSInputFile(result.path)
         await callback.message.answer_video(
             video,
-            caption=f"✂️ {title_line}{clip_range} · {height}p",
+            caption=f"✂️ {title_caption}" if title_caption else None,
         )
 
         # Следом — аудиодорожка этого же отрезка отдельным файлом.
@@ -455,7 +455,7 @@ async def handle_quality(callback: CallbackQuery) -> None:
             )
             await callback.message.answer_audio(
                 audio,
-                caption=f"🎵 {title_line}{clip_range}",
+                caption=f"🎵 {title_caption}" if title_caption else None,
                 title=title or clip_range,
             )
         elif audio_path is None:

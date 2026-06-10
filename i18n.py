@@ -186,6 +186,21 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "📤 Uploading… ({size} MB)",
         "uz": "📤 Yuboryapman… ({size} MB)",
     },
+    "note_button": {
+        "ru": "🔵 Кружочек",
+        "en": "🔵 Video note",
+        "uz": "🔵 Doira video",
+    },
+    "making_note": {
+        "ru": "🔵 Делаю кружочек…",
+        "en": "🔵 Making the video note…",
+        "uz": "🔵 Doira video tayyorlayapman…",
+    },
+    "note_too_long": {
+        "ru": "❌ Кружочек может быть не длиннее 60 секунд.",
+        "en": "❌ A video note can be at most 60 seconds long.",
+        "uz": "❌ Doira video ko'pi bilan 60 soniya bo'lishi mumkin.",
+    },
     "extracting_audio": {
         "ru": "🎵 Извлекаю аудио…",
         "en": "🎵 Extracting the audio…",

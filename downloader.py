@@ -224,6 +224,43 @@ async def extract_audio(video_path: Path, timeout: int = 180) -> Path | None:
     return audio_path
 
 
+async def make_video_note(video_path: Path, timeout: int = 180) -> Path | None:
+    """Перекодирует клип в квадратный «кружочек» Telegram (512×512).
+
+    Кадр обрезается по центру до квадрата. Возвращает путь к готовому
+    файлу либо None при ошибке.
+    """
+    note_path = video_path.with_name("note.mp4")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(video_path),
+        "-vf", "crop='min(iw,ih)':'min(iw,ih)',scale=512:512",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "26",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(note_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    if proc.returncode != 0 or not note_path.exists():
+        return None
+    return note_path
+
+
 def cleanup(tmp_dir: Path) -> None:
     """Удаляет временную папку запроса вместе со всем содержимым."""
     shutil.rmtree(tmp_dir, ignore_errors=True)

@@ -42,6 +42,7 @@ from downloader import (
     extract_audio,
     file_size_mb,
     get_video_info,
+    make_video_note,
 )
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
 
@@ -65,6 +66,11 @@ TELEGRAM_API_URL: str = os.getenv("TELEGRAM_API_URL", "")
 
 # Доступные варианты качества для inline-кнопок.
 QUALITY_OPTIONS = [360, 480, 720]
+
+# Лимит Telegram на длину «кружочка» (video note), секунд.
+NOTE_MAX_SECONDS = 60
+# Качество исходника для кружочка (итог всё равно 512×512).
+NOTE_SOURCE_HEIGHT = 480
 
 logging.basicConfig(
     level=logging.INFO,
@@ -183,18 +189,28 @@ def format_seconds(total: int) -> str:
 # ---------------------------------------------------------------------------
 # Inline-клавиатура выбора качества
 # ---------------------------------------------------------------------------
-def quality_keyboard() -> InlineKeyboardMarkup:
-    """Кнопки выбора качества 360p / 480p / 720p.
+def quality_keyboard(lang: str, allow_note: bool) -> InlineKeyboardMarkup:
+    """Кнопки выбора качества 360p / 480p / 720p (+ «кружочек» для коротких).
 
     Если MAX_HEIGHT ниже всех стандартных вариантов — показываем одну
     кнопку с самим MAX_HEIGHT, чтобы клавиатура не оказалась пустой.
     """
     options = [q for q in QUALITY_OPTIONS if q <= MAX_HEIGHT] or [MAX_HEIGHT]
-    buttons = [
-        InlineKeyboardButton(text=f"{q}p", callback_data=f"quality:{q}")
-        for q in options
+    rows = [
+        [
+            InlineKeyboardButton(text=f"{q}p", callback_data=f"quality:{q}")
+            for q in options
+        ]
     ]
-    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+    if allow_note:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "note_button"), callback_data="quality:note"
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def language_keyboard() -> InlineKeyboardMarkup:
@@ -303,7 +319,7 @@ async def ask_quality(
             end=format_seconds(end),
             duration=format_seconds(duration),
         ),
-        reply_markup=quality_keyboard(),
+        reply_markup=quality_keyboard(lang, allow_note=duration <= NOTE_MAX_SECONDS),
     )
     return True
 
@@ -359,13 +375,22 @@ async def handle_quality(callback: CallbackQuery) -> None:
     """Обрабатывает выбор качества и запускает скачивание."""
     user_id = callback.from_user.id
     lang = get_lang(callback.from_user)
-    height = int(callback.data.split(":", 1)[1])
+    choice = callback.data.split(":", 1)[1]
+    is_note = choice == "note"
+    height = NOTE_SOURCE_HEIGHT if is_note else int(choice)
 
     # pop, а не get: повторное нажатие кнопки не запустит второе скачивание,
     # а новый запрос пользователя, пришедший во время скачивания, не пострадает.
     request = pending.pop(user_id, None)
     if request is None:
         await callback.answer(t(lang, "stale_request"), show_alert=True)
+        return
+
+    # Кнопка «кружочек» показывается только для коротких отрезков, но запрос
+    # мог смениться, пока на экране была старая клавиатура — перепроверяем.
+    if is_note and request.end - request.start > NOTE_MAX_SECONDS:
+        pending[user_id] = request  # вернуть, выбор качества ещё актуален
+        await callback.answer(t(lang, "note_too_long"), show_alert=True)
         return
 
     await callback.answer()
@@ -434,6 +459,23 @@ async def handle_quality(callback: CallbackQuery) -> None:
     await status.edit_text(t(lang, "uploading", size=f"{size_mb:.0f}"))
 
     try:
+        # Режим кружочка: квадратное видео без подписи, аудио не прикладываем.
+        if is_note:
+            await status.edit_text(t(lang, "making_note"))
+            note_path = await make_video_note(result.path)
+            if note_path is None or file_size_mb(note_path) > MAX_FILE_MB:
+                logger.error("Video note failed: user=%s", user_id)
+                await status.edit_text(
+                    t(lang, "download_failed", error=t(lang, "unknown_error"))
+                )
+                stats.track(user_id, "download_fail")
+                return
+            await callback.message.answer_video_note(FSInputFile(note_path))
+            await status.edit_text(t(lang, "done"))
+            stats.track(user_id, "download_ok")
+            logger.info("Note sent OK: user=%s", user_id)
+            return
+
         clip_range = (
             f"{format_seconds(request.start)}–{format_seconds(request.end)}"
         )

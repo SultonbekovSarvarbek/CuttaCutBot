@@ -1,0 +1,28 @@
+[Unit]
+Description=YouTube Clip Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Под каким пользователем запускать (замени при необходимости).
+User=clipbot
+Group=clipbot
+
+# Путь к проекту (замени на свой).
+WorkingDirectory=/opt/clipbot
+
+# Переменные окружения берём из файла .env (формат KEY=VALUE).
+EnvironmentFile=/opt/clipbot/.env
+
+# Запуск через python из виртуального окружения.
+ExecStart=/opt/clipbot/venv/bin/python /opt/clipbot/bot.py
+
+Restart=always
+RestartSec=5
+
+# Чтобы ffmpeg/yt-dlp находились в PATH.
+Environment=PATH=/opt/clipbot/venv/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

@@ -48,10 +48,8 @@ import stats
 from music import recognize_music
 from downloader import (
     TMP_ROOT,
-    burn_subtitles,
     cleanup,
     download_section,
-    download_subtitles,
     extract_audio,
     file_size_mb,
     get_video_info,
@@ -296,14 +294,6 @@ def quality_keyboard(lang: str, allow_note: bool) -> InlineKeyboardMarkup:
             ),
         ]
     )
-    # Клип с вшитыми субтитрами (hardsub) — тоже для любого отрезка.
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text=t(lang, "subs_button"), callback_data="quality:subs"
-            )
-        ]
-    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -474,10 +464,9 @@ async def handle_quality(callback: CallbackQuery) -> None:
     is_gif = choice == "gif"
     is_sticker = choice == "sticker"
     is_audio = choice == "audio"
-    is_subs = choice == "subs"
     height = (
         NOTE_SOURCE_HEIGHT
-        if (is_note or is_gif or is_sticker or is_audio or is_subs)
+        if (is_note or is_gif or is_sticker or is_audio)
         else int(choice)
     )
 
@@ -568,49 +557,6 @@ async def handle_quality(callback: CallbackQuery) -> None:
             t(lang, "too_big", size=f"{size_mb:.0f}", limit=MAX_FILE_MB)
         )
         return
-
-    # Режим субтитров: скачиваем их, режем под отрезок и вшиваем в кадры.
-    if is_subs:
-        await status.edit_text(t(lang, "fetching_subs"))
-        # Приоритет языков: язык пользователя, потом английский и русский.
-        sub_langs = [lang] + [c for c in ("en", "ru") if c != lang]
-        subs_path = await download_subtitles(
-            request.url, request.start, request.end, result.tmp_dir, sub_langs
-        )
-        if subs_path is None:
-            # Субтитров нет — возвращаем запрос и даём выбрать другой формат
-            # (setdefault: не затираем более новый запрос, если он появился).
-            cleanup(result.tmp_dir)
-            pending.setdefault(user_id, request)
-            await status.edit_text(
-                t(lang, "subs_not_found"),
-                reply_markup=quality_keyboard(
-                    lang,
-                    allow_note=request.end - request.start <= NOTE_MAX_SECONDS,
-                ),
-            )
-            return
-
-        await status.edit_text(t(lang, "burning_subs"))
-        burned = await burn_subtitles(result.path, subs_path)
-        if burned is None:
-            logger.error("Subtitle burn failed: user=%s", user_id)
-            cleanup(result.tmp_dir)
-            stats.track(user_id, "download_fail")
-            await status.edit_text(
-                t(lang, "download_failed", error=t(lang, "unknown_error"))
-            )
-            return
-
-        result.path = burned
-        # Перекодированный файл мог вырасти — проверяем размер заново.
-        size_mb = file_size_mb(burned)
-        if size_mb > MAX_FILE_MB:
-            cleanup(result.tmp_dir)
-            await status.edit_text(
-                t(lang, "too_big", size=f"{size_mb:.0f}", limit=MAX_FILE_MB)
-            )
-            return
 
     if not is_audio:
         await status.edit_text(t(lang, "uploading", size=f"{size_mb:.0f}"))

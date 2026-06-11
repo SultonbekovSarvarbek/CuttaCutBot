@@ -193,6 +193,149 @@ async def download_section(
     return DownloadResult(ok=True, path=mp4_files[0], tmp_dir=tmp_dir, stderr=stderr)
 
 
+async def download_subtitles(
+    url: str,
+    start: int,
+    end: int,
+    tmp_dir: Path,
+    langs: list[str],
+    timeout: int = 120,
+) -> Path | None:
+    """Скачивает субтитры видео и вырезает кусок, совпадающий с клипом.
+
+    Берёт и обычные, и автоматические субтитры YouTube. langs — приоритет
+    языков, например ["ru", "en"]: скачиваются все доступные из списка,
+    используется первый найденный по порядку.
+
+    Возвращает путь к clip.srt с таймкодами, сдвинутыми к началу отрезка,
+    либо None, если субтитров нет (или в отрезке нет ни одной реплики).
+    """
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--skip-download",
+        "--write-subs",
+        "--write-auto-subs",
+        # Не прерываться, если один из языков не скачался (бывает 429
+        # на авто-переведённых субтитрах) — остальные языки ещё могут успеть.
+        "--ignore-errors",
+        "--sub-langs", ",".join(langs),
+        "--sub-format", "vtt/srt/best",
+        # Веб-клиент YouTube требует PO-токен для субтитров, android — нет.
+        # На само видео это не влияет: здесь только субтитры (skip-download).
+        "--extractor-args", "youtube:player_client=android",
+        "-o", str(tmp_dir / "subs.%(ext)s"),
+    ]
+    if COOKIES_FILE.exists():
+        cmd += ["--cookies", str(COOKIES_FILE)]
+    cmd.append(url)
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+    # Код возврата не проверяем: с --ignore-errors часть языков могла
+    # упасть, но нужные файлы при этом скачаться — смотрим, что появилось.
+
+    # yt-dlp сохраняет субтитры как subs.<язык>.vtt — выбираем файл
+    # по приоритету языков, иначе первый попавшийся.
+    sub_files = sorted(tmp_dir.glob("subs.*"))
+    picked: Path | None = None
+    for want in langs:
+        for f in sub_files:
+            code = f.suffixes[0].lstrip(".").lower() if len(f.suffixes) >= 2 else ""
+            if code.startswith(want.lower()):
+                picked = f
+                break
+        if picked:
+            break
+    if picked is None and sub_files:
+        picked = sub_files[0]
+    if picked is None:
+        return None
+
+    # Субтитры скачиваются на ВСЁ видео — вырезаем нужный диапазон.
+    # -ss перед -i сдвигает таймкоды так, что начало отрезка становится нулём.
+    clip_subs = tmp_dir / "clip.srt"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss", str(start),
+        "-i", str(picked),
+        "-t", str(end - start),
+        str(clip_subs),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=60)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    # Пустой srt = в этом отрезке никто не говорит, вшивать нечего.
+    if (
+        proc.returncode != 0
+        or not clip_subs.exists()
+        or clip_subs.stat().st_size == 0
+    ):
+        return None
+    return clip_subs
+
+
+async def burn_subtitles(
+    video_path: Path, subs_path: Path, timeout: int = 600
+) -> Path | None:
+    """Вшивает субтитры прямо в кадры клипа (hardsub).
+
+    Требует полного перекодирования видео — это единственный способ,
+    при котором текст виден во встроенном плеере Telegram. Звук копируется
+    без изменений. Возвращает путь к готовому файлу либо None при ошибке.
+    """
+    out_path = video_path.with_name("subbed.mp4")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(video_path),
+        # Имя файла без пути: ffmpeg запускается из папки с субтитрами,
+        # чтобы не экранировать спецсимволы в аргументе фильтра.
+        "-vf", f"subtitles={subs_path.name}",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "24",
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        str(out_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=str(subs_path.parent),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    if proc.returncode != 0 or not out_path.exists():
+        return None
+    return out_path
+
+
 async def extract_audio(video_path: Path, timeout: int = 180) -> Path | None:
     """Извлекает аудиодорожку из готового клипа в mp3 (кладёт рядом).
 

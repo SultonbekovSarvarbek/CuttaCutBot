@@ -289,6 +289,35 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "🎵 Download audio",
         "uz": "🎵 Audioni yuklab olish",
     },
+    "subs_button": {
+        "ru": "📝 С субтитрами",
+        "en": "📝 With subtitles",
+        "uz": "📝 Subtitrlar bilan",
+    },
+    "fetching_subs": {
+        "ru": "📝 Ищу субтитры…",
+        "en": "📝 Looking for subtitles…",
+        "uz": "📝 Subtitrlarni qidiryapman…",
+    },
+    "burning_subs": {
+        "ru": "📝 Вшиваю субтитры в видео…",
+        "en": "📝 Burning the subtitles into the video…",
+        "uz": "📝 Subtitrlarni videoga joylayapman…",
+    },
+    "subs_not_found": {
+        "ru": (
+            "📝 Субтитров для этого отрезка не нашлось.\n"
+            "Можешь выбрать другой вариант:"
+        ),
+        "en": (
+            "📝 No subtitles found for this clip.\n"
+            "You can pick another option:"
+        ),
+        "uz": (
+            "📝 Bu parcha uchun subtitrlar topilmadi.\n"
+            "Boshqa variantni tanlashingiz mumkin:"
+        ),
+    },
     "audio_gone": {
         "ru": "❌ Аудио устарело — вырежи клип заново.",
         "en": "❌ The audio has expired — cut the clip again.",

@@ -130,6 +130,10 @@ async def download_section(
         "--download-sections",
         _format_section(start, end),
         "--force-keyframes-at-cuts",
+        # Веб-клиент YouTube отдаёт ссылки, требующие PO-токен, — ffmpeg
+        # получает на них 403. Клиент android_vr отдаёт рабочие ссылки на
+        # все качества; android — запасной (у него только 360p).
+        "--extractor-args", "youtube:player_client=android_vr,android",
         "-o",
         output_template,
     ]

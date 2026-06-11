@@ -152,6 +152,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "⏬ Downloading in {height}p…",
         "uz": "⏬ {height}p sifatda yuklab olyapman…",
     },
+    "downloading_audio": {
+        "ru": "⏬ Качаю аудио…",
+        "en": "⏬ Downloading the audio…",
+        "uz": "⏬ Audioni yuklab olyapman…",
+    },
     "download_failed": {
         "ru": "❌ Не получилось скачать.\n<code>{error}</code>",
         "en": "❌ Download failed.\n<code>{error}</code>",

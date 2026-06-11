@@ -146,6 +146,27 @@ def _purge_old_audio() -> None:
             item.path.unlink(missing_ok=True)
             pending_audio.pop(token, None)
 
+
+async def announce_music(
+    message: Message, lang: str, audio_path: Path, user_id: int
+) -> None:
+    """Распознаёт музыку в аудио и присылает название трека.
+
+    Молчит, если трек не нашёлся или Shazam недоступен.
+    """
+    match = await recognize_music(audio_path)
+    if match is None:
+        return
+    track = _escape(
+        f"{match.artist} — {match.title}" if match.artist else match.title
+    )
+    track = f'<a href="{match.url}">{track}</a>' if match.url else f"<b>{track}</b>"
+    await message.answer(
+        t(lang, "music_found", track=track),
+        disable_web_page_preview=True,
+    )
+    logger.info("Music found: user=%s %s — %s", user_id, match.artist, match.title)
+
 # Ограничитель одновременных скачиваний (yt-dlp + ffmpeg — тяжёлые процессы).
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
@@ -262,12 +283,15 @@ def quality_keyboard(lang: str, allow_note: bool) -> InlineKeyboardMarkup:
                 ),
             ]
         )
-    # Стикер доступен для любого отрезка: в него идут первые 3 секунды.
+    # Стикер и «только аудио» доступны для любого отрезка.
     rows.append(
         [
             InlineKeyboardButton(
                 text=t(lang, "sticker_button"), callback_data="quality:sticker"
-            )
+            ),
+            InlineKeyboardButton(
+                text=t(lang, "audio_button"), callback_data="quality:audio"
+            ),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -439,7 +463,12 @@ async def handle_quality(callback: CallbackQuery) -> None:
     is_note = choice == "note"
     is_gif = choice == "gif"
     is_sticker = choice == "sticker"
-    height = NOTE_SOURCE_HEIGHT if (is_note or is_gif or is_sticker) else int(choice)
+    is_audio = choice == "audio"
+    height = (
+        NOTE_SOURCE_HEIGHT
+        if (is_note or is_gif or is_sticker or is_audio)
+        else int(choice)
+    )
 
     # pop, а не get: повторное нажатие кнопки не запустит второе скачивание,
     # а новый запрос пользователя, пришедший во время скачивания, не пострадает.
@@ -471,7 +500,10 @@ async def handle_quality(callback: CallbackQuery) -> None:
 
     async with download_semaphore:
         # Редактируем одно и то же сообщение по мере прогресса.
-        await status.edit_text(t(lang, "downloading", height=height))
+        await status.edit_text(
+            t(lang, "downloading_audio") if is_audio
+            else t(lang, "downloading", height=height)
+        )
 
         # Название пойдёт в подписи, длина — для проверки границ отрезка,
         # чтобы ffmpeg не падал на диапазоне за концом ролика.
@@ -497,6 +529,7 @@ async def handle_quality(callback: CallbackQuery) -> None:
             height=height,
             max_height=MAX_HEIGHT,
             timeout=DOWNLOAD_TIMEOUT,
+            audio_only=is_audio,
         )
 
     if not result.ok:
@@ -525,7 +558,8 @@ async def handle_quality(callback: CallbackQuery) -> None:
         )
         return
 
-    await status.edit_text(t(lang, "uploading", size=f"{size_mb:.0f}"))
+    if not is_audio:
+        await status.edit_text(t(lang, "uploading", size=f"{size_mb:.0f}"))
 
     try:
         clip_range = (
@@ -533,6 +567,33 @@ async def handle_quality(callback: CallbackQuery) -> None:
         )
         # В подписи — только название видео (если его удалось узнать).
         title_caption = f"<b>{_escape(title[:200])}</b>" if title else None
+
+        # Режим «только аудио»: конвертируем скачанную дорожку в mp3
+        # и присылаем без видео.
+        if is_audio:
+            await status.edit_text(t(lang, "extracting_audio"))
+            audio_path = await extract_audio(result.path)
+            if audio_path is None:
+                logger.error("Audio convert failed: user=%s", user_id)
+                await status.edit_text(
+                    t(lang, "download_failed", error=t(lang, "unknown_error"))
+                )
+                stats.track(user_id, "download_fail")
+                return
+            await callback.message.answer_audio(
+                FSInputFile(
+                    audio_path,
+                    filename=f"{_safe_filename(title) or 'clip'}.mp3",
+                ),
+                caption=f"🎵 {title_caption}" if title_caption else None,
+                title=title or clip_range,
+            )
+            await status.edit_text(t(lang, "recognizing_music"))
+            await announce_music(callback.message, lang, audio_path, user_id)
+            await status.edit_text(t(lang, "done"))
+            stats.track(user_id, "download_ok")
+            logger.info("Audio sent OK: user=%s", user_id)
+            return
 
         # Режим стикера: WEBM/VP9 из первых секунд отрезка, без подписи
         # (Telegram не позволяет прикладывать подпись к стикеру).
@@ -635,24 +696,7 @@ async def handle_quality(callback: CallbackQuery) -> None:
         # Распознаём музыку в клипе (Shazam) — молчим, если не нашлось.
         if audio_path:
             await status.edit_text(t(lang, "recognizing_music"))
-            match = await recognize_music(audio_path)
-            if match:
-                track = _escape(
-                    f"{match.artist} — {match.title}" if match.artist
-                    else match.title
-                )
-                if match.url:
-                    track = f'<a href="{match.url}">{track}</a>'
-                else:
-                    track = f"<b>{track}</b>"
-                await callback.message.answer(
-                    t(lang, "music_found", track=track),
-                    disable_web_page_preview=True,
-                )
-                logger.info(
-                    "Music found: user=%s %s — %s",
-                    user_id, match.artist, match.title,
-                )
+            await announce_music(callback.message, lang, audio_path, user_id)
 
         await status.edit_text(t(lang, "done"))
         stats.track(user_id, "download_ok")

@@ -102,6 +102,7 @@ async def download_section(
     height: int,
     max_height: int,
     timeout: int = 600,
+    audio_only: bool = False,
 ) -> DownloadResult:
     """Скачивает ТОЛЬКО заданный отрезок видео и склеивает в mp4.
 
@@ -109,7 +110,8 @@ async def download_section(
     start, end — начало и конец отрезка в секундах;
     height     — выбранное пользователем качество (360/480/720);
     max_height — потолок качества из конфигурации;
-    timeout    — максимум секунд на работу yt-dlp (защита от зависания).
+    timeout    — максимум секунд на работу yt-dlp (защита от зависания);
+    audio_only — качать только аудиодорожку (height игнорируется).
 
     Возвращает DownloadResult. Каждый запрос работает в отдельной uuid-папке.
     """
@@ -122,25 +124,25 @@ async def download_section(
 
     output_template = str(tmp_dir / "clip.%(ext)s")
 
-    # Формат: лучшее видео+аудио в пределах height, либо единый поток-фолбэк.
-    fmt = (
-        f"bestvideo[height<={height}]+bestaudio/"
-        f"best[height<={height}]"
-    )
-
     cmd: list[str] = [
         "yt-dlp",
         "--no-playlist",
         "--download-sections",
         _format_section(start, end),
         "--force-keyframes-at-cuts",
-        "-f",
-        fmt,
-        "--merge-output-format",
-        "mp4",
         "-o",
         output_template,
     ]
+    if audio_only:
+        # Только звук: формат любой (m4a/webm), в mp3 переведёт extract_audio.
+        cmd += ["-f", "bestaudio/best"]
+    else:
+        # Лучшее видео+аудио в пределах height, либо единый поток-фолбэк.
+        fmt = (
+            f"bestvideo[height<={height}]+bestaudio/"
+            f"best[height<={height}]"
+        )
+        cmd += ["-f", fmt, "--merge-output-format", "mp4"]
 
     # Если рядом лежит cookies.txt — подкладываем его автоматически.
     if COOKIES_FILE.exists():

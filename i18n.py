@@ -279,6 +279,16 @@ TEXTS: dict[str, dict[str, str]] = {
             "Start bosing, keyin qaytadan urinib ko'ring."
         ),
     },
+    "audio_button": {
+        "ru": "🎵 Скачать аудио",
+        "en": "🎵 Download audio",
+        "uz": "🎵 Audioni yuklab olish",
+    },
+    "audio_gone": {
+        "ru": "❌ Аудио устарело — вырежи клип заново.",
+        "en": "❌ The audio has expired — cut the clip again.",
+        "uz": "❌ Audio eskirgan — parchani qaytadan keseng.",
+    },
     "recognizing_music": {
         "ru": "🎶 Слушаю, что за музыка…",
         "en": "🎶 Listening for the music…",

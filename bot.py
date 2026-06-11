@@ -12,7 +12,11 @@ import asyncio
 import logging
 import os
 import re
+import shutil
+import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 # Подхватываем .env, если он есть (удобно для локального запуска).
 try:
@@ -43,6 +47,7 @@ from aiogram.types import (
 import stats
 from music import recognize_music
 from downloader import (
+    TMP_ROOT,
     cleanup,
     download_section,
     extract_audio,
@@ -113,6 +118,33 @@ pending: dict[int, PendingRequest] = {}
 
 # Ссылки, ожидающие таймкодов (пользователь прислал только URL).
 pending_url: dict[int, str] = {}
+
+
+@dataclass
+class StoredAudio:
+    """mp3, ожидающий нажатия кнопки «Скачать аудио» под видео."""
+
+    path: Path
+    title: str
+    ts: float  # время создания — для чистки протухших файлов
+
+
+# Папка для отложенных mp3 (живут до нажатия кнопки или до TTL).
+AUDIO_DIR = TMP_ROOT / "audio"
+# Сколько секунд храним аудио, если кнопку так и не нажали.
+AUDIO_TTL_SECONDS = 6 * 3600
+
+# Отложенные mp3 по токену из callback_data кнопки.
+pending_audio: dict[str, StoredAudio] = {}
+
+
+def _purge_old_audio() -> None:
+    """Удаляет протухшие mp3 — вызывается лениво при каждом новом клипе."""
+    now = time.time()
+    for token, item in list(pending_audio.items()):
+        if now - item.ts > AUDIO_TTL_SECONDS:
+            item.path.unlink(missing_ok=True)
+            pending_audio.pop(token, None)
 
 # Ограничитель одновременных скачиваний (yt-dlp + ffmpeg — тяжёлые процессы).
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
@@ -561,27 +593,44 @@ async def handle_quality(callback: CallbackQuery) -> None:
             logger.info("GIF sent OK: user=%s", user_id)
             return
 
+        # mp3 извлекаем заранее: он нужен и для кнопки «Скачать аудио»,
+        # и для распознавания музыки. Сам файл отправляем только по кнопке.
+        await status.edit_text(t(lang, "extracting_audio"))
+        audio_path = await extract_audio(result.path)
+        if audio_path is None:
+            # Не критично: видео отправим без кнопки, просто логируем.
+            logger.warning("Audio extraction failed: user=%s", user_id)
+
+        audio_kb = None
+        if audio_path and file_size_mb(audio_path) <= MAX_FILE_MB:
+            # Переносим mp3 из tmp-папки запроса (её удалит cleanup)
+            # в долгоживущую папку — до нажатия кнопки или до TTL.
+            AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+            token = uuid.uuid4().hex
+            stored_path = AUDIO_DIR / f"{token}.mp3"
+            shutil.move(str(audio_path), stored_path)
+            audio_path = stored_path
+            pending_audio[token] = StoredAudio(
+                path=stored_path, title=title or clip_range, ts=time.time()
+            )
+            _purge_old_audio()
+            audio_kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=t(lang, "audio_button"),
+                            callback_data=f"audio:{token}",
+                        )
+                    ]
+                ]
+            )
+
         video = FSInputFile(result.path)
         await callback.message.answer_video(
             video,
             caption=f"✂️ {title_caption}" if title_caption else None,
+            reply_markup=audio_kb,
         )
-
-        # Следом — аудиодорожка этого же отрезка отдельным файлом.
-        await status.edit_text(t(lang, "extracting_audio"))
-        audio_path = await extract_audio(result.path)
-        if audio_path and file_size_mb(audio_path) <= MAX_FILE_MB:
-            audio = FSInputFile(
-                audio_path, filename=f"{_safe_filename(title) or 'clip'}.mp3"
-            )
-            await callback.message.answer_audio(
-                audio,
-                caption=f"🎵 {title_caption}" if title_caption else None,
-                title=title or clip_range,
-            )
-        elif audio_path is None:
-            # Не критично: видео уже у пользователя, просто логируем.
-            logger.warning("Audio extraction failed: user=%s", user_id)
 
         # Распознаём музыку в клипе (Shazam) — молчим, если не нашлось.
         if audio_path:
@@ -614,6 +663,43 @@ async def handle_quality(callback: CallbackQuery) -> None:
     finally:
         # Всегда чистим временную папку запроса.
         cleanup(result.tmp_dir)
+
+
+@dp.callback_query(F.data.startswith("audio:"))
+async def handle_audio(callback: CallbackQuery) -> None:
+    """Кнопка «Скачать аудио» под видео: присылает отложенный mp3."""
+    lang = get_lang(callback.from_user)
+    token = callback.data.split(":", 1)[1]
+
+    # pop: повторное нажатие не отправит файл дважды.
+    stored = pending_audio.pop(token, None)
+    if stored is None or not stored.path.exists():
+        await callback.answer(t(lang, "audio_gone"), show_alert=True)
+        return
+
+    await callback.answer()
+    try:
+        await callback.message.answer_audio(
+            FSInputFile(
+                stored.path,
+                filename=f"{_safe_filename(stored.title) or 'clip'}.mp3",
+            ),
+            caption=f"🎵 <b>{_escape(stored.title[:200])}</b>",
+            title=stored.title,
+        )
+    except Exception:  # noqa: BLE001 — вернуть токен, чтобы можно было повторить
+        logger.exception("Audio send failed: token=%s", token)
+        pending_audio[token] = stored
+        return
+    finally:
+        if token not in pending_audio:
+            stored.path.unlink(missing_ok=True)
+
+    # Убираем кнопку у видео — аудио уже отправлено.
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:  # noqa: BLE001 — не критично
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +862,9 @@ def _safe_filename(title: str | None) -> str:
 async def main() -> None:
     if not BOT_TOKEN:
         raise SystemExit("Не задан BOT_TOKEN (переменная окружения).")
+
+    # После рестарта токены кнопок теряются — чистим осиротевшие mp3.
+    shutil.rmtree(AUDIO_DIR, ignore_errors=True)
 
     default = DefaultBotProperties(parse_mode=ParseMode.HTML)
 

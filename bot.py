@@ -48,6 +48,7 @@ from downloader import (
     file_size_mb,
     get_video_info,
     make_gif,
+    make_sticker,
     make_video_note,
 )
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
@@ -77,6 +78,8 @@ QUALITY_OPTIONS = [360, 480, 720]
 NOTE_MAX_SECONDS = 60
 # Лимит длины гифки (чтобы файлы оставались лёгкими), секунд.
 GIF_MAX_SECONDS = 60
+# Лимит Telegram на длину видео-стикера, секунд (берём начало отрезка).
+STICKER_SECONDS = 3
 # Качество исходника для кружочка и гифки.
 NOTE_SOURCE_HEIGHT = 480
 # Качество клипа в inline-режиме (без выбора кнопками).
@@ -226,6 +229,14 @@ def quality_keyboard(lang: str, allow_note: bool) -> InlineKeyboardMarkup:
                 ),
             ]
         )
+    # Стикер доступен для любого отрезка: в него идут первые 3 секунды.
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=t(lang, "sticker_button"), callback_data="quality:sticker"
+            )
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -394,7 +405,8 @@ async def handle_quality(callback: CallbackQuery) -> None:
     choice = callback.data.split(":", 1)[1]
     is_note = choice == "note"
     is_gif = choice == "gif"
-    height = NOTE_SOURCE_HEIGHT if (is_note or is_gif) else int(choice)
+    is_sticker = choice == "sticker"
+    height = NOTE_SOURCE_HEIGHT if (is_note or is_gif or is_sticker) else int(choice)
 
     # pop, а не get: повторное нажатие кнопки не запустит второе скачивание,
     # а новый запрос пользователя, пришедший во время скачивания, не пострадает.
@@ -412,6 +424,10 @@ async def handle_quality(callback: CallbackQuery) -> None:
             show_alert=True,
         )
         return
+
+    # В стикер идут только первые 3 секунды — не качаем лишнего.
+    if is_sticker:
+        request.end = min(request.end, request.start + STICKER_SECONDS)
 
     await callback.answer()
     status = callback.message
@@ -484,6 +500,26 @@ async def handle_quality(callback: CallbackQuery) -> None:
         )
         # В подписи — только название видео (если его удалось узнать).
         title_caption = f"<b>{_escape(title[:200])}</b>" if title else None
+
+        # Режим стикера: WEBM/VP9 из первых секунд отрезка, без подписи
+        # (Telegram не позволяет прикладывать подпись к стикеру).
+        if is_sticker:
+            await status.edit_text(t(lang, "making_sticker"))
+            sticker_path = await make_sticker(
+                result.path, max_seconds=STICKER_SECONDS
+            )
+            if sticker_path is None:
+                logger.error("Sticker failed: user=%s", user_id)
+                await status.edit_text(
+                    t(lang, "download_failed", error=t(lang, "unknown_error"))
+                )
+                stats.track(user_id, "download_fail")
+                return
+            await callback.message.answer_sticker(FSInputFile(sticker_path))
+            await status.edit_text(t(lang, "done"))
+            stats.track(user_id, "download_ok")
+            logger.info("Sticker sent OK: user=%s", user_id)
+            return
 
         # Режим кружочка: квадратное видео без подписи, аудио не прикладываем.
         if is_note:

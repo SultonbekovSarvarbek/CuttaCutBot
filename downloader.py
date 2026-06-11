@@ -295,6 +295,55 @@ async def make_gif(video_path: Path, timeout: int = 120) -> Path | None:
     return gif_path
 
 
+async def make_sticker(
+    video_path: Path, max_seconds: int = 3, timeout: int = 180
+) -> Path | None:
+    """Делает видео-стикер Telegram из начала клипа.
+
+    Требования Telegram: WEBM/VP9, одна сторона ровно 512px (другая ≤512),
+    до 3 секунд, до 30 fps, без звука, файл не больше 256 КБ.
+
+    Пробуем несколько уровней сжатия (CRF), пока не уложимся в лимит.
+    Возвращает путь к .webm либо None при ошибке.
+    """
+    sticker_path = video_path.with_name("sticker.webm")
+    # Большая сторона — ровно 512, меньшая — пропорционально (чётная, -2).
+    scale = "scale='if(gt(iw,ih),512,-2)':'if(gt(iw,ih),-2,512)'"
+
+    for crf in (40, 50, 60):
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(video_path),
+            "-t", str(max_seconds),
+            "-an",                  # стикеры всегда без звука
+            "-vf", f"{scale},fps=30",
+            "-c:v", "libvpx-vp9",
+            "-b:v", "0",
+            "-crf", str(crf),
+            str(sticker_path),
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return None
+
+        if proc.returncode != 0 or not sticker_path.exists():
+            return None
+        if os.path.getsize(sticker_path) <= 256 * 1024:
+            return sticker_path
+
+    # Даже на максимальном сжатии не влезли в 256 КБ.
+    return None
+
+
 def cleanup(tmp_dir: Path) -> None:
     """Удаляет временную папку запроса вместе со всем содержимым."""
     shutil.rmtree(tmp_dir, ignore_errors=True)

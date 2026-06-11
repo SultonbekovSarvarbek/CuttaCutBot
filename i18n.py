@@ -216,6 +216,16 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "❌ A GIF can be at most 60 seconds long.",
         "uz": "❌ GIF ko'pi bilan 60 soniya bo'lishi mumkin.",
     },
+    "sticker_button": {
+        "ru": "🧩 Стикер (3с)",
+        "en": "🧩 Sticker (3s)",
+        "uz": "🧩 Stiker (3s)",
+    },
+    "making_sticker": {
+        "ru": "🧩 Делаю стикер из первых 3 секунд…",
+        "en": "🧩 Making a sticker from the first 3 seconds…",
+        "uz": "🧩 Dastlabki 3 soniyadan stiker tayyorlayapman…",
+    },
     "inline_help_title": {
         "ru": "✂️ Как вырезать клип",
         "en": "✂️ How to cut a clip",

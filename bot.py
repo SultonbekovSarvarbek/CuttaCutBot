@@ -41,6 +41,7 @@ from aiogram.types import (
 )
 
 import stats
+from music import recognize_music
 from downloader import (
     cleanup,
     download_section,
@@ -581,6 +582,28 @@ async def handle_quality(callback: CallbackQuery) -> None:
         elif audio_path is None:
             # Не критично: видео уже у пользователя, просто логируем.
             logger.warning("Audio extraction failed: user=%s", user_id)
+
+        # Распознаём музыку в клипе (Shazam) — молчим, если не нашлось.
+        if audio_path:
+            await status.edit_text(t(lang, "recognizing_music"))
+            match = await recognize_music(audio_path)
+            if match:
+                track = _escape(
+                    f"{match.artist} — {match.title}" if match.artist
+                    else match.title
+                )
+                if match.url:
+                    track = f'<a href="{match.url}">{track}</a>'
+                else:
+                    track = f"<b>{track}</b>"
+                await callback.message.answer(
+                    t(lang, "music_found", track=track),
+                    disable_web_page_preview=True,
+                )
+                logger.info(
+                    "Music found: user=%s %s — %s",
+                    user_id, match.artist, match.title,
+                )
 
         await status.edit_text(t(lang, "done"))
         stats.track(user_id, "download_ok")

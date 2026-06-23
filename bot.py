@@ -394,6 +394,13 @@ async def ask_quality(
         return False
 
     pending[message.from_user.id] = PendingRequest(url=url, start=start, end=end)
+    logger.info(
+        "Request: user=%s %s %s-%s",
+        message.from_user.id,
+        url,
+        format_seconds(start),
+        format_seconds(end),
+    )
     stats.track(message.from_user.id, "request")
     await message.answer(
         t(

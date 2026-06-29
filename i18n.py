@@ -319,6 +319,43 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "❌ Failed to send.\n<code>{error}</code>",
         "uz": "❌ Yuborishda xatolik.\n<code>{error}</code>",
     },
+    "feedback_button": {
+        "ru": "💬 Оставить отзыв",
+        "en": "💬 Leave feedback",
+        "uz": "💬 Fikr qoldirish",
+    },
+    "support_button": {
+        "ru": "🛟 Поддержка",
+        "en": "🛟 Support",
+        "uz": "🛟 Yordam",
+    },
+    "feedback_prompt": {
+        "ru": (
+            "✍️ Напиши свой отзыв или предложение одним сообщением — "
+            "я передам его создателю бота.\n\n"
+            "Чтобы отменить, отправь /start."
+        ),
+        "en": (
+            "✍️ Write your feedback or suggestion in one message — "
+            "I'll pass it on to the bot's creator.\n\n"
+            "To cancel, send /start."
+        ),
+        "uz": (
+            "✍️ Fikr yoki taklifingizni bitta xabarda yozing — "
+            "men uni bot yaratuvchisiga yetkazaman.\n\n"
+            "Bekor qilish uchun /start yuboring."
+        ),
+    },
+    "feedback_thanks": {
+        "ru": "🙏 Спасибо за отзыв! Он передан создателю бота.",
+        "en": "🙏 Thanks for your feedback! It's been sent to the bot's creator.",
+        "uz": "🙏 Fikringiz uchun rahmat! U bot yaratuvchisiga yuborildi.",
+    },
+    "feedback_empty": {
+        "ru": "❌ Отзыв пустой. Напиши пару слов или отправь /start для отмены.",
+        "en": "❌ The feedback is empty. Write a few words or send /start to cancel.",
+        "uz": "❌ Fikr bo'sh. Bir-ikki so'z yozing yoki bekor qilish uchun /start yuboring.",
+    },
 }
 
 

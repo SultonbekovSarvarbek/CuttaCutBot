@@ -21,6 +21,16 @@ _conn.execute(
     ")"
 )
 _conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts)")
+
+# Отзывы и предложения пользователей (отдельная таблица — хранит текст).
+_conn.execute(
+    "CREATE TABLE IF NOT EXISTS feedback ("
+    "  ts       INTEGER NOT NULL,"   # unix-время отзыва
+    "  user_id  INTEGER NOT NULL,"
+    "  username TEXT,"               # @username на момент отзыва (если был)
+    "  text     TEXT    NOT NULL"
+    ")"
+)
 _conn.commit()
 
 
@@ -31,6 +41,25 @@ def track(user_id: int, event: str) -> None:
         (int(time.time()), user_id, event),
     )
     _conn.commit()
+
+
+def save_feedback(user_id: int, username: str | None, text: str) -> None:
+    """Сохраняет отзыв/предложение пользователя."""
+    _conn.execute(
+        "INSERT INTO feedback (ts, user_id, username, text) VALUES (?, ?, ?, ?)",
+        (int(time.time()), user_id, username, text),
+    )
+    _conn.commit()
+
+
+def recent_feedback(limit: int = 10) -> list[tuple[int, int, str | None, str]]:
+    """Последние отзывы: список (ts, user_id, username, text), новые сверху."""
+    rows = _conn.execute(
+        "SELECT ts, user_id, username, text FROM feedback "
+        "ORDER BY ts DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return rows
 
 
 def _count(query: str, *args) -> int:

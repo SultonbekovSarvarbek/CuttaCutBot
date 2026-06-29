@@ -73,6 +73,9 @@ MAX_CONCURRENT_DOWNLOADS: int = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2"))
 # Свой id можно узнать, написав @userinfobot.
 ADMIN_ID: int = int(os.getenv("ADMIN_ID", "0"))
 
+# Username поддержки (без @) — кнопка «Поддержка» ведёт в этот чат.
+SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "s_sarvar").lstrip("@")
+
 # URL локального Telegram Bot API server (если поднят) — для снятия лимита 50 МБ.
 # Пусто = используется официальный api.telegram.org.
 TELEGRAM_API_URL: str = os.getenv("TELEGRAM_API_URL", "")
@@ -118,6 +121,9 @@ pending: dict[int, PendingRequest] = {}
 
 # Ссылки, ожидающие таймкодов (пользователь прислал только URL).
 pending_url: dict[int, str] = {}
+
+# Пользователи, от которых ждём текст отзыва (нажали «Оставить отзыв»).
+awaiting_feedback: set[int] = set()
 
 
 @dataclass
@@ -306,6 +312,30 @@ def language_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
+def feedback_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Кнопки «Оставить отзыв» и «Поддержка» под инструкцией /start.
+
+    «Поддержка» — обычная ссылка на чат с человеком из SUPPORT_USERNAME.
+    """
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=t(lang, "feedback_button"), callback_data="feedback"
+            )
+        ]
+    ]
+    if SUPPORT_USERNAME:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "support_button"),
+                    url=f"https://t.me/{SUPPORT_USERNAME}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def start_text(lang: str) -> str:
     """Текст инструкции /start на нужном языке."""
     return t(lang, "start", max_clip=format_seconds(MAX_CLIP_SECONDS))
@@ -321,10 +351,13 @@ dp = Dispatcher()
 async def cmd_start(message: Message) -> None:
     """Первый запуск — выбор языка, дальше — инструкция."""
     stats.track(message.from_user.id, "start")
+    # /start всегда отменяет ожидание отзыва.
+    awaiting_feedback.discard(message.from_user.id)
     if message.from_user.id not in user_lang:
         await message.answer(CHOOSE_LANGUAGE, reply_markup=language_keyboard())
         return
-    await message.answer(start_text(get_lang(message.from_user)))
+    lang = get_lang(message.from_user)
+    await message.answer(start_text(lang), reply_markup=feedback_keyboard(lang))
 
 
 @dp.message(Command("lang"))
@@ -355,6 +388,42 @@ async def cmd_stats(message: Message) -> None:
     )
 
 
+@dp.message(Command("feedback"))
+async def cmd_feedback(message: Message) -> None:
+    """Команда «Оставить отзыв»: переводит пользователя в режим ввода отзыва."""
+    lang = get_lang(message.from_user)
+    awaiting_feedback.add(message.from_user.id)
+    await message.answer(t(lang, "feedback_prompt"))
+
+
+@dp.message(Command("feedbacks"))
+async def cmd_feedbacks(message: Message) -> None:
+    """Последние отзывы пользователей — только для владельца бота (ADMIN_ID)."""
+    if not ADMIN_ID or message.from_user.id != ADMIN_ID:
+        return  # для остальных команда просто молчит
+
+    rows = stats.recent_feedback(limit=15)
+    if not rows:
+        await message.answer("Отзывов пока нет.")
+        return
+
+    lines = ["💬 <b>Последние отзывы</b>\n"]
+    for ts, user_id, username, text in rows:
+        when = time.strftime("%d.%m %H:%M", time.localtime(ts))
+        who = f"@{username}" if username else f"id{user_id}"
+        lines.append(f"<b>{who}</b> · {when}\n{_escape(text)}\n")
+    await message.answer("\n".join(lines), disable_web_page_preview=True)
+
+
+@dp.callback_query(F.data == "feedback")
+async def handle_feedback_button(callback: CallbackQuery) -> None:
+    """Кнопка «Оставить отзыв»: просим написать отзыв следующим сообщением."""
+    lang = get_lang(callback.from_user)
+    awaiting_feedback.add(callback.from_user.id)
+    await callback.answer()
+    await callback.message.answer(t(lang, "feedback_prompt"))
+
+
 @dp.callback_query(F.data.startswith("lang:"))
 async def handle_lang(callback: CallbackQuery) -> None:
     """Сохраняет выбранный язык и показывает инструкцию."""
@@ -367,7 +436,7 @@ async def handle_lang(callback: CallbackQuery) -> None:
     save_langs(user_lang)
     await callback.answer()
     await callback.message.edit_text(t(code, "lang_saved", name=LANGUAGES[code]))
-    await callback.message.answer(start_text(code))
+    await callback.message.answer(start_text(code), reply_markup=feedback_keyboard(code))
 
 
 async def ask_quality(
@@ -415,6 +484,34 @@ async def ask_quality(
     return True
 
 
+async def save_user_feedback(message: Message, lang: str) -> None:
+    """Сохраняет отзыв пользователя и пересылает его владельцу бота."""
+    user = message.from_user
+    text = message.text.strip()
+    if not text:
+        await message.answer(t(lang, "feedback_empty"))
+        return
+
+    awaiting_feedback.discard(user.id)
+    stats.save_feedback(user.id, user.username, text)
+    logger.info("Feedback: user=%s %r", user.id, text[:200])
+
+    # Пересылаем владельцу в реальном времени (если ADMIN_ID задан).
+    if ADMIN_ID:
+        who = f"@{user.username}" if user.username else f"id{user.id}"
+        name = _escape(user.full_name or "")
+        try:
+            await message.bot.send_message(
+                ADMIN_ID,
+                f"💬 <b>Новый отзыв</b> от {who} ({name})\n\n{_escape(text)}",
+                disable_web_page_preview=True,
+            )
+        except Exception:  # noqa: BLE001 — не мешаем пользователю, просто логируем
+            logger.exception("Failed to forward feedback to admin")
+
+    await message.answer(t(lang, "feedback_thanks"))
+
+
 @dp.message(F.text)
 async def handle_link(message: Message) -> None:
     """Принимает ссылку и таймкоды — вместе или по очереди.
@@ -427,6 +524,11 @@ async def handle_link(message: Message) -> None:
     lang = get_lang(message.from_user)
     user_id = message.from_user.id
     text = message.text.strip()
+
+    # Режим отзыва: текущее сообщение — это отзыв, а не запрос на клип.
+    if user_id in awaiting_feedback:
+        await save_user_feedback(message, lang)
+        return
 
     # Вариант 1: всё одним сообщением.
     parsed = parse_message(text)

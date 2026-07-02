@@ -88,7 +88,7 @@ TELEGRAM_API_URL: str = os.getenv("TELEGRAM_API_URL", "")
 # Цена подписки в Stars за 30 дней.
 PREMIUM_STARS: int = int(os.getenv("PREMIUM_STARS", "100"))
 # Лимиты бесплатного тарифа.
-FREE_CLIPS_PER_DAY: int = int(os.getenv("FREE_CLIPS_PER_DAY", "5"))
+FREE_CLIPS_PER_DAY: int = int(os.getenv("FREE_CLIPS_PER_DAY", "1"))
 FREE_MAX_HEIGHT: int = int(os.getenv("FREE_MAX_HEIGHT", "480"))
 FREE_MAX_CLIP_SECONDS: int = int(os.getenv("FREE_MAX_CLIP_SECONDS", str(5 * 60)))
 # Текст водяного знака на видео бесплатного тарифа (пусто = @username бота).

@@ -221,6 +221,16 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "❌ A GIF can be at most 60 seconds long.",
         "uz": "❌ GIF ko'pi bilan 60 soniya bo'lishi mumkin.",
     },
+    "vertical_button": {
+        "ru": "📱 Мобильный формат (9:16)",
+        "en": "📱 Mobile format (9:16)",
+        "uz": "📱 Mobil format (9:16)",
+    },
+    "making_vertical": {
+        "ru": "📱 Обрезаю под мобильный формат 9:16…",
+        "en": "📱 Cropping to the 9:16 mobile format…",
+        "uz": "📱 9:16 mobil formatga moslashtiryapman…",
+    },
     "sticker_button": {
         "ru": "🧩 Стикер (3с)",
         "en": "🧩 Sticker (3s)",

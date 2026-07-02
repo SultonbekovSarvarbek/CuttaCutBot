@@ -55,6 +55,7 @@ from downloader import (
     get_video_info,
     make_gif,
     make_sticker,
+    make_vertical,
     make_video_note,
 )
 from i18n import CHOOSE_LANGUAGE, LANGUAGES, load_langs, save_langs, t
@@ -91,6 +92,9 @@ GIF_MAX_SECONDS = 60
 STICKER_SECONDS = 3
 # Качество исходника для кружочка и гифки.
 NOTE_SOURCE_HEIGHT = 480
+# Качество исходника для мобильного формата 9:16 (кадр режется по ширине,
+# поэтому берём максимум, чтобы вертикальная полоса не была мыльной).
+VERTICAL_SOURCE_HEIGHT = 720
 # Качество клипа в inline-режиме (без выбора кнопками).
 INLINE_HEIGHT = 480
 
@@ -289,6 +293,14 @@ def quality_keyboard(lang: str, allow_note: bool) -> InlineKeyboardMarkup:
                 ),
             ]
         )
+    # Мобильный формат 9:16 доступен для любого отрезка.
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=t(lang, "vertical_button"), callback_data="quality:vertical"
+            )
+        ]
+    )
     # Стикер и «только аудио» доступны для любого отрезка.
     rows.append(
         [
@@ -573,11 +585,13 @@ async def handle_quality(callback: CallbackQuery) -> None:
     is_gif = choice == "gif"
     is_sticker = choice == "sticker"
     is_audio = choice == "audio"
-    height = (
-        NOTE_SOURCE_HEIGHT
-        if (is_note or is_gif or is_sticker or is_audio)
-        else int(choice)
-    )
+    is_vertical = choice == "vertical"
+    if is_note or is_gif or is_sticker or is_audio:
+        height = NOTE_SOURCE_HEIGHT
+    elif is_vertical:
+        height = VERTICAL_SOURCE_HEIGHT
+    else:
+        height = int(choice)
 
     # pop, а не get: повторное нажатие кнопки не запустит второе скачивание,
     # а новый запрос пользователя, пришедший во время скачивания, не пострадает.
@@ -762,6 +776,20 @@ async def handle_quality(callback: CallbackQuery) -> None:
             stats.track(user_id, "download_ok")
             logger.info("GIF sent OK: user=%s", user_id)
             return
+
+        # Мобильный формат: режем кадр по центру до вертикального 9:16,
+        # дальше клип идёт обычным путём (аудио-кнопка, распознавание музыки).
+        if is_vertical:
+            await status.edit_text(t(lang, "making_vertical"))
+            vertical_path = await make_vertical(result.path)
+            if vertical_path is None or file_size_mb(vertical_path) > MAX_FILE_MB:
+                logger.error("Vertical failed: user=%s", user_id)
+                await status.edit_text(
+                    t(lang, "download_failed", error=t(lang, "unknown_error"))
+                )
+                stats.track(user_id, "download_fail")
+                return
+            result.path = vertical_path
 
         # mp3 извлекаем заранее: он нужен и для кнопки «Скачать аудио»,
         # и для распознавания музыки. Сам файл отправляем только по кнопке.

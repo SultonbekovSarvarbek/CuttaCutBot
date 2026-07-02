@@ -267,6 +267,45 @@ async def make_video_note(video_path: Path, timeout: int = 180) -> Path | None:
     return note_path
 
 
+async def make_vertical(video_path: Path, timeout: int = 300) -> Path | None:
+    """Обрезает клип по центру до вертикального формата 9:16 (под телефон).
+
+    Из горизонтального кадра остаётся центральная вертикальная полоса —
+    как в Shorts/Reels. Стороны округляются до чётных (требование libx264).
+    Возвращает путь к готовому mp4 либо None при ошибке.
+    """
+    vertical_path = video_path.with_name("vertical.mp4")
+    crop = "crop='2*floor(min(iw,ih*9/16)/2)':'2*floor(min(ih,iw*16/9)/2)'"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(video_path),
+        "-vf", crop,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(vertical_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    if proc.returncode != 0 or not vertical_path.exists():
+        return None
+    return vertical_path
+
+
 async def make_gif(video_path: Path, timeout: int = 120) -> Path | None:
     """Делает «гифку» для Telegram: тот же клип, но без звуковой дорожки.
 

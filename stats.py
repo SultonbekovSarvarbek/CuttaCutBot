@@ -111,4 +111,11 @@ def summary() -> dict[str, int]:
         "fails_total": _count(
             "SELECT COUNT(*) FROM events WHERE event = 'download_fail'"
         ),
+        "premium_users": _count(
+            "SELECT COUNT(DISTINCT user_id) FROM events "
+            "WHERE event = 'premium_paid'"
+        ),
+        "premium_payments": _count(
+            "SELECT COUNT(*) FROM events WHERE event = 'premium_paid'"
+        ),
     }

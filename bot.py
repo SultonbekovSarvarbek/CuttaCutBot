@@ -433,6 +433,9 @@ async def cmd_stats(message: Message) -> None:
         f"  за 24 часа: <b>{s['clips_day']}</b>\n"
         f"  за 7 дней: <b>{s['clips_week']}</b>\n"
         f"  всего: <b>{s['clips_total']}</b>\n\n"
+        "⭐ Премиум:\n"
+        f"  купили подписку: <b>{s['premium_users']}</b>\n"
+        f"  оплат всего: <b>{s['premium_payments']}</b>\n\n"
         f"📨 Запросов всего: <b>{s['requests_total']}</b>\n"
         f"❌ Ошибок скачивания: <b>{s['fails_total']}</b>"
     )

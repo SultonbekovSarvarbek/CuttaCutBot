@@ -329,6 +329,126 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "❌ Failed to send.\n<code>{error}</code>",
         "uz": "❌ Yuborishda xatolik.\n<code>{error}</code>",
     },
+    "premium_button": {
+        "ru": "⭐ Премиум",
+        "en": "⭐ Premium",
+        "uz": "⭐ Premium",
+    },
+    "premium_pitch": {
+        "ru": (
+            "⭐ <b>Премиум</b>\n\n"
+            "Бесплатно: {free_clips} клипов в сутки, качество до "
+            "{free_height}p, отрезки до {free_max}, водяной знак на видео.\n\n"
+            "С Премиумом:\n"
+            "• клипы без дневного лимита\n"
+            "• качество до {max_height}p\n"
+            "• отрезки до {max_clip}\n"
+            "• видео без водяного знака\n"
+            "• приоритет в очереди\n\n"
+            "{stars} ⭐ в месяц, продлевается автоматически.\n"
+            "Отменить подписку можно в настройках Telegram."
+        ),
+        "en": (
+            "⭐ <b>Premium</b>\n\n"
+            "Free plan: {free_clips} clips per day, up to {free_height}p, "
+            "clips up to {free_max}, watermark on videos.\n\n"
+            "With Premium:\n"
+            "• no daily limit\n"
+            "• quality up to {max_height}p\n"
+            "• clips up to {max_clip}\n"
+            "• no watermark\n"
+            "• priority queue\n\n"
+            "{stars} ⭐ per month, renews automatically.\n"
+            "You can cancel anytime in Telegram settings."
+        ),
+        "uz": (
+            "⭐ <b>Premium</b>\n\n"
+            "Bepul tarif: kuniga {free_clips} ta klip, {free_height}p gacha "
+            "sifat, {free_max} gacha parcha, videoda suv belgisi.\n\n"
+            "Premium bilan:\n"
+            "• kunlik limitsiz\n"
+            "• {max_height}p gacha sifat\n"
+            "• {max_clip} gacha parcha\n"
+            "• suv belgisisiz video\n"
+            "• navbatda ustunlik\n\n"
+            "Oyiga {stars} ⭐, avtomatik uzaytiriladi.\n"
+            "Bekor qilish — Telegram sozlamalarida."
+        ),
+    },
+    "premium_subscribe_button": {
+        "ru": "⭐ Оформить за {stars} Stars/мес",
+        "en": "⭐ Subscribe — {stars} Stars/month",
+        "uz": "⭐ Obuna — oyiga {stars} Stars",
+    },
+    "premium_status": {
+        "ru": "⭐ Премиум активен до <b>{date}</b>.",
+        "en": "⭐ Premium is active until <b>{date}</b>.",
+        "uz": "⭐ Premium <b>{date}</b> gacha faol.",
+    },
+    "premium_thanks": {
+        "ru": "🎉 Оплата прошла! Премиум активен до <b>{date}</b>. Спасибо!",
+        "en": "🎉 Payment received! Premium is active until <b>{date}</b>. Thank you!",
+        "uz": "🎉 To'lov qabul qilindi! Premium <b>{date}</b> gacha faol. Rahmat!",
+    },
+    "premium_invoice_title": {
+        "ru": "Премиум-подписка",
+        "en": "Premium subscription",
+        "uz": "Premium obuna",
+    },
+    "premium_invoice_desc": {
+        "ru": (
+            "Клипы без лимитов, качество до {max_height}p, "
+            "без водяного знака, приоритет в очереди"
+        ),
+        "en": (
+            "Unlimited clips, up to {max_height}p, "
+            "no watermark, priority queue"
+        ),
+        "uz": (
+            "Limitsiz kliplar, {max_height}p gacha sifat, "
+            "suv belgisisiz, navbatda ustunlik"
+        ),
+    },
+    "limit_reached": {
+        "ru": (
+            "🚫 Дневной лимит бесплатных клипов исчерпан "
+            "({limit} в сутки).\n"
+            "Попробуй завтра — или оформи Премиум без лимитов."
+        ),
+        "en": (
+            "🚫 You've reached the free daily limit "
+            "({limit} clips per day).\n"
+            "Try again tomorrow — or get Premium with no limits."
+        ),
+        "uz": (
+            "🚫 Bepul kunlik limit tugadi (kuniga {limit} ta klip).\n"
+            "Ertaga urinib ko'ring — yoki limitsiz Premium oling."
+        ),
+    },
+    "too_long_free": {
+        "ru": (
+            "❌ Отрезок слишком длинный: {duration}.\n"
+            "Бесплатно — до {max_clip}, с Премиумом — до {max_premium}."
+        ),
+        "en": (
+            "❌ The clip is too long: {duration}.\n"
+            "Free plan — up to {max_clip}, with Premium — up to {max_premium}."
+        ),
+        "uz": (
+            "❌ Parcha juda uzun: {duration}.\n"
+            "Bepul — {max_clip} gacha, Premium bilan — {max_premium} gacha."
+        ),
+    },
+    "quality_locked": {
+        "ru": "🔒 Бесплатно доступно качество до {free_height}p. Выше — с Премиумом.",
+        "en": "🔒 The free plan offers up to {free_height}p. Higher quality comes with Premium.",
+        "uz": "🔒 Bepul tarifda {free_height}p gacha. Yuqorirog'i — Premium bilan.",
+    },
+    "adding_watermark": {
+        "ru": "💧 Добавляю водяной знак…",
+        "en": "💧 Adding the watermark…",
+        "uz": "💧 Suv belgisi qo'shyapman…",
+    },
     "feedback_button": {
         "ru": "💬 Оставить отзыв",
         "en": "💬 Leave feedback",

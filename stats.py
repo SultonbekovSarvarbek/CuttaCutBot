@@ -62,6 +62,20 @@ def recent_feedback(limit: int = 10) -> list[tuple[int, int, str | None, str]]:
     return rows
 
 
+def clips_today(user_id: int) -> int:
+    """Сколько клипов пользователь скачал за последние 24 часа.
+
+    Нужно для дневного лимита бесплатного тарифа.
+    """
+    day_ago = int(time.time()) - 24 * 3600
+    return _count(
+        "SELECT COUNT(*) FROM events "
+        "WHERE event = 'download_ok' AND user_id = ? AND ts >= ?",
+        user_id,
+        day_ago,
+    )
+
+
 def _count(query: str, *args) -> int:
     return _conn.execute(query, args).fetchone()[0]
 

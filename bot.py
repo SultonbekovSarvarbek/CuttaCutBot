@@ -40,14 +40,18 @@ from aiogram.types import (
     InlineQueryResultArticle,
     InputMediaVideo,
     InputTextMessageContent,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
     User,
 )
 
+import premium
 import stats
 from music import recognize_music
 from downloader import (
     TMP_ROOT,
+    add_watermark,
     cleanup,
     download_section,
     extract_audio,
@@ -80,6 +84,18 @@ SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "s_sarvar").lstrip("@")
 # URL локального Telegram Bot API server (если поднят) — для снятия лимита 50 МБ.
 # Пусто = используется официальный api.telegram.org.
 TELEGRAM_API_URL: str = os.getenv("TELEGRAM_API_URL", "")
+
+# --- Премиум-подписка (Telegram Stars) ---
+# Цена подписки в Stars за 30 дней.
+PREMIUM_STARS: int = int(os.getenv("PREMIUM_STARS", "100"))
+# Лимиты бесплатного тарифа.
+FREE_CLIPS_PER_DAY: int = int(os.getenv("FREE_CLIPS_PER_DAY", "5"))
+FREE_MAX_HEIGHT: int = int(os.getenv("FREE_MAX_HEIGHT", "480"))
+FREE_MAX_CLIP_SECONDS: int = int(os.getenv("FREE_MAX_CLIP_SECONDS", str(5 * 60)))
+# Текст водяного знака на видео бесплатного тарифа (пусто = @username бота).
+WATERMARK_TEXT: str = os.getenv("WATERMARK_TEXT", "")
+# Период подписки — ровно 30 дней (других значений Telegram не разрешает).
+SUBSCRIPTION_PERIOD = 30 * 24 * 3600
 
 # Доступные варианты качества для inline-кнопок.
 QUALITY_OPTIONS = [360, 480, 720]
@@ -180,6 +196,22 @@ async def announce_music(
 # Ограничитель одновременных скачиваний (yt-dlp + ffmpeg — тяжёлые процессы).
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
+# Отдельный пул слотов для подписчиков — им не приходится ждать в общей
+# очереди за бесплатными пользователями.
+premium_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+
+def watermark_for(premium_user: bool) -> str | None:
+    """Текст водяного знака: None для подписчиков (и если подписать нечем)."""
+    if premium_user:
+        return None
+    return WATERMARK_TEXT or (f"@{BOT_USERNAME}" if BOT_USERNAME else None)
+
+
+def free_max_clip() -> int:
+    """Максимальная длина отрезка на бесплатном тарифе."""
+    return min(FREE_MAX_CLIP_SECONDS, MAX_CLIP_SECONDS)
+
 # Выбранный язык каждого пользователя (подгружается с диска при старте).
 user_lang: dict[int, str] = load_langs()
 
@@ -269,19 +301,28 @@ def format_seconds(total: int) -> str:
 # ---------------------------------------------------------------------------
 # Inline-клавиатура выбора качества
 # ---------------------------------------------------------------------------
-def quality_keyboard(lang: str, allow_note: bool) -> InlineKeyboardMarkup:
+def quality_keyboard(
+    lang: str, allow_note: bool, premium_user: bool
+) -> InlineKeyboardMarkup:
     """Кнопки выбора качества 360p / 480p / 720p (+ «кружочек» для коротких).
 
+    Качества выше FREE_MAX_HEIGHT для бесплатного тарифа показываются
+    с замком — нажатие ведёт на предложение Премиума.
     Если MAX_HEIGHT ниже всех стандартных вариантов — показываем одну
     кнопку с самим MAX_HEIGHT, чтобы клавиатура не оказалась пустой.
     """
     options = [q for q in QUALITY_OPTIONS if q <= MAX_HEIGHT] or [MAX_HEIGHT]
-    rows = [
-        [
-            InlineKeyboardButton(text=f"{q}p", callback_data=f"quality:{q}")
-            for q in options
-        ]
-    ]
+    quality_row = []
+    for q in options:
+        if premium_user or q <= FREE_MAX_HEIGHT:
+            quality_row.append(
+                InlineKeyboardButton(text=f"{q}p", callback_data=f"quality:{q}")
+            )
+        else:
+            quality_row.append(
+                InlineKeyboardButton(text=f"🔒 {q}p", callback_data="locked")
+            )
+    rows = [quality_row]
     if allow_note:
         rows.append(
             [
@@ -332,9 +373,14 @@ def feedback_keyboard(lang: str) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
+                text=t(lang, "premium_button"), callback_data="premium"
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 text=t(lang, "feedback_button"), callback_data="feedback"
             )
-        ]
+        ],
     ]
     if SUPPORT_USERNAME:
         rows.append(
@@ -346,6 +392,19 @@ def feedback_keyboard(lang: str) -> InlineKeyboardMarkup:
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def premium_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Одна кнопка «Премиум» — под сообщениями про лимиты."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "premium_button"), callback_data="premium"
+                )
+            ]
+        ]
+    )
 
 
 def start_text(lang: str) -> str:
@@ -436,6 +495,125 @@ async def handle_feedback_button(callback: CallbackQuery) -> None:
     await callback.message.answer(t(lang, "feedback_prompt"))
 
 
+# ---------------------------------------------------------------------------
+# Премиум-подписка (Telegram Stars)
+# ---------------------------------------------------------------------------
+async def send_premium_pitch(message: Message, lang: str, user_id: int) -> None:
+    """Показывает статус подписки либо предложение оформить Премиум.
+
+    Подписка оформляется по инвойс-ссылке: только они поддерживают
+    автопродление (Telegram сам списывает Stars раз в 30 дней).
+    """
+    exp = premium.expires_at(user_id)
+    if exp and exp > time.time():
+        date = time.strftime("%d.%m.%Y", time.localtime(exp))
+        await message.answer(t(lang, "premium_status", date=date))
+        return
+
+    link = await message.bot.create_invoice_link(
+        title=t(lang, "premium_invoice_title"),
+        description=t(lang, "premium_invoice_desc", max_height=MAX_HEIGHT),
+        payload="premium",
+        currency="XTR",
+        prices=[LabeledPrice(label="Premium", amount=PREMIUM_STARS)],
+        subscription_period=SUBSCRIPTION_PERIOD,
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "premium_subscribe_button", stars=PREMIUM_STARS),
+                    url=link,
+                )
+            ]
+        ]
+    )
+    await message.answer(
+        t(
+            lang,
+            "premium_pitch",
+            stars=PREMIUM_STARS,
+            free_clips=FREE_CLIPS_PER_DAY,
+            free_height=FREE_MAX_HEIGHT,
+            free_max=format_seconds(free_max_clip()),
+            max_height=MAX_HEIGHT,
+            max_clip=format_seconds(MAX_CLIP_SECONDS),
+        ),
+        reply_markup=kb,
+    )
+
+
+@dp.message(Command("premium"))
+async def cmd_premium(message: Message) -> None:
+    """Команда /premium: статус подписки или предложение оформить."""
+    lang = get_lang(message.from_user)
+    await send_premium_pitch(message, lang, message.from_user.id)
+
+
+@dp.callback_query(F.data == "premium")
+async def handle_premium_button(callback: CallbackQuery) -> None:
+    """Кнопка «Премиум» (стартовый экран, сообщения про лимиты)."""
+    lang = get_lang(callback.from_user)
+    await callback.answer()
+    await send_premium_pitch(callback.message, lang, callback.from_user.id)
+
+
+@dp.callback_query(F.data == "locked")
+async def handle_locked(callback: CallbackQuery) -> None:
+    """Нажатие на 🔒-качество: объясняем и предлагаем Премиум."""
+    lang = get_lang(callback.from_user)
+    await callback.answer(
+        t(lang, "quality_locked", free_height=FREE_MAX_HEIGHT), show_alert=True
+    )
+    await send_premium_pitch(callback.message, lang, callback.from_user.id)
+
+
+@dp.pre_checkout_query()
+async def handle_pre_checkout(query: PreCheckoutQuery) -> None:
+    """Telegram спрашивает подтверждение перед списанием Stars."""
+    await query.answer(ok=True)
+
+
+@dp.message(F.successful_payment)
+async def handle_payment(message: Message) -> None:
+    """Оплата прошла (первая или автопродление) — включаем подписку."""
+    user_id = message.from_user.id
+    lang = get_lang(message.from_user)
+    payment = message.successful_payment
+
+    # У подписочных платежей Telegram присылает дату окончания сам;
+    # на всякий случай fallback — 30 дней от момента оплаты.
+    exp_dt = payment.subscription_expiration_date
+    expires = (
+        int(exp_dt.timestamp()) if exp_dt
+        else int(time.time()) + SUBSCRIPTION_PERIOD
+    )
+    premium.activate(user_id, expires, bool(payment.is_recurring))
+    stats.track(user_id, "premium_paid")
+    logger.info(
+        "Premium paid: user=%s stars=%s until=%s",
+        user_id, payment.total_amount, expires,
+    )
+
+    date = time.strftime("%d.%m.%Y", time.localtime(expires))
+    await message.answer(t(lang, "premium_thanks", date=date))
+
+    if ADMIN_ID:
+        who = (
+            f"@{message.from_user.username}"
+            if message.from_user.username
+            else f"id{user_id}"
+        )
+        try:
+            await message.bot.send_message(
+                ADMIN_ID,
+                f"⭐ <b>Оплата подписки</b>: {who}, "
+                f"{payment.total_amount} Stars, до {date}",
+            )
+        except Exception:  # noqa: BLE001 — не мешаем пользователю
+            logger.exception("Failed to notify admin about payment")
+
+
 @dp.callback_query(F.data.startswith("lang:"))
 async def handle_lang(callback: CallbackQuery) -> None:
     """Сохраняет выбранный язык и показывает инструкцию."""
@@ -462,15 +640,40 @@ async def ask_quality(
         await message.answer(t(lang, "end_before_start"))
         return False
 
+    user_id = message.from_user.id
+    premium_user = premium.is_premium(user_id)
+
     duration = end - start
-    if duration > MAX_CLIP_SECONDS:
-        await message.answer(
-            t(
-                lang,
-                "too_long",
-                duration=format_seconds(duration),
-                max_clip=format_seconds(MAX_CLIP_SECONDS),
+    max_clip = MAX_CLIP_SECONDS if premium_user else free_max_clip()
+    if duration > max_clip:
+        # Отрезок влез бы в премиум-лимит — подсказываем про подписку.
+        if not premium_user and duration <= MAX_CLIP_SECONDS:
+            await message.answer(
+                t(
+                    lang,
+                    "too_long_free",
+                    duration=format_seconds(duration),
+                    max_clip=format_seconds(max_clip),
+                    max_premium=format_seconds(MAX_CLIP_SECONDS),
+                ),
+                reply_markup=premium_keyboard(lang),
             )
+        else:
+            await message.answer(
+                t(
+                    lang,
+                    "too_long",
+                    duration=format_seconds(duration),
+                    max_clip=format_seconds(max_clip),
+                )
+            )
+        return False
+
+    # Дневной лимит бесплатного тарифа.
+    if not premium_user and stats.clips_today(user_id) >= FREE_CLIPS_PER_DAY:
+        await message.answer(
+            t(lang, "limit_reached", limit=FREE_CLIPS_PER_DAY),
+            reply_markup=premium_keyboard(lang),
         )
         return False
 
@@ -491,7 +694,11 @@ async def ask_quality(
             end=format_seconds(end),
             duration=format_seconds(duration),
         ),
-        reply_markup=quality_keyboard(lang, allow_note=duration <= NOTE_MAX_SECONDS),
+        reply_markup=quality_keyboard(
+            lang,
+            allow_note=duration <= NOTE_MAX_SECONDS,
+            premium_user=premium_user,
+        ),
     )
     return True
 
@@ -586,12 +793,17 @@ async def handle_quality(callback: CallbackQuery) -> None:
     is_sticker = choice == "sticker"
     is_audio = choice == "audio"
     is_vertical = choice == "vertical"
+    premium_user = premium.is_premium(user_id)
     if is_note or is_gif or is_sticker or is_audio:
         height = NOTE_SOURCE_HEIGHT
     elif is_vertical:
         height = VERTICAL_SOURCE_HEIGHT
     else:
         height = int(choice)
+        # Страховка от устаревшей клавиатуры (подписка кончилась,
+        # а кнопка 720p ещё видна) — молча спускаем к лимиту тарифа.
+        if not premium_user:
+            height = min(height, FREE_MAX_HEIGHT)
 
     # pop, а не get: повторное нажатие кнопки не запустит второе скачивание,
     # а новый запрос пользователя, пришедший во время скачивания, не пострадает.
@@ -610,6 +822,16 @@ async def handle_quality(callback: CallbackQuery) -> None:
         )
         return
 
+    # Дневной лимит бесплатного тарифа (перепроверка: клавиатура могла
+    # висеть на экране, пока лимит уже исчерпался другими клипами).
+    if not premium_user and stats.clips_today(user_id) >= FREE_CLIPS_PER_DAY:
+        await callback.answer()
+        await callback.message.edit_text(
+            t(lang, "limit_reached", limit=FREE_CLIPS_PER_DAY),
+            reply_markup=premium_keyboard(lang),
+        )
+        return
+
     # В стикер идут только первые 3 секунды — не качаем лишнего.
     if is_sticker:
         request.end = min(request.end, request.start + STICKER_SECONDS)
@@ -617,11 +839,14 @@ async def handle_quality(callback: CallbackQuery) -> None:
     await callback.answer()
     status = callback.message
 
+    # Подписчики идут через отдельный пул слотов — без общей очереди.
+    semaphore = premium_semaphore if premium_user else download_semaphore
+
     # Если все слоты скачивания заняты — честно сообщаем про очередь.
-    if download_semaphore.locked():
+    if semaphore.locked():
         await status.edit_text(t(lang, "queued"))
 
-    async with download_semaphore:
+    async with semaphore:
         # Редактируем одно и то же сообщение по мере прогресса.
         await status.edit_text(
             t(lang, "downloading_audio") if is_audio
@@ -781,7 +1006,9 @@ async def handle_quality(callback: CallbackQuery) -> None:
         # дальше клип идёт обычным путём (аудио-кнопка, распознавание музыки).
         if is_vertical:
             await status.edit_text(t(lang, "making_vertical"))
-            vertical_path = await make_vertical(result.path)
+            vertical_path = await make_vertical(
+                result.path, watermark=watermark_for(premium_user)
+            )
             if vertical_path is None or file_size_mb(vertical_path) > MAX_FILE_MB:
                 logger.error("Vertical failed: user=%s", user_id)
                 await status.edit_text(
@@ -790,6 +1017,18 @@ async def handle_quality(callback: CallbackQuery) -> None:
                 stats.track(user_id, "download_fail")
                 return
             result.path = vertical_path
+
+        # Бесплатный тариф: полупрозрачный водяной знак в углу кадра.
+        elif watermark_for(premium_user):
+            await status.edit_text(t(lang, "adding_watermark"))
+            marked_path = await add_watermark(
+                result.path, watermark_for(premium_user)
+            )
+            if marked_path is not None:
+                result.path = marked_path
+            else:
+                # Не критично: отправим без знака, просто логируем.
+                logger.warning("Watermark failed: user=%s", user_id)
 
         # mp3 извлекаем заранее: он нужен и для кнопки «Скачать аудио»,
         # и для распознавания музыки. Сам файл отправляем только по кнопке.
@@ -892,10 +1131,15 @@ async def handle_inline(query: InlineQuery) -> None:
     lang = get_lang(query.from_user)
     parsed = parse_message(query.query or "")
 
+    max_clip = (
+        MAX_CLIP_SECONDS
+        if premium.is_premium(query.from_user.id)
+        else free_max_clip()
+    )
     valid = (
         parsed is not None
         and parsed.end > parsed.start
-        and parsed.end - parsed.start <= MAX_CLIP_SECONDS
+        and parsed.end - parsed.start <= max_clip
     )
     if not valid:
         help_result = InlineQueryResultArticle(
@@ -956,7 +1200,15 @@ async def handle_chosen(chosen: ChosenInlineResult, bot: Bot) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("Inline edit failed: user=%s", user_id)
 
-    async with download_semaphore:
+    premium_user = premium.is_premium(user_id)
+
+    # Дневной лимит бесплатного тарифа действует и в inline-режиме.
+    if not premium_user and stats.clips_today(user_id) >= FREE_CLIPS_PER_DAY:
+        await fail(t(lang, "limit_reached", limit=FREE_CLIPS_PER_DAY))
+        return
+
+    semaphore = premium_semaphore if premium_user else download_semaphore
+    async with semaphore:
         title, video_len = await get_video_info(request.url)
         if video_len:
             if request.start >= video_len:
@@ -984,6 +1236,15 @@ async def handle_chosen(chosen: ChosenInlineResult, bot: Bot) -> None:
         return
 
     try:
+        # Бесплатный тариф: водяной знак и на inline-клипах.
+        wm = watermark_for(premium_user)
+        if wm:
+            marked_path = await add_watermark(result.path, wm)
+            if marked_path is not None:
+                result.path = marked_path
+            else:
+                logger.warning("Inline watermark failed: user=%s", user_id)
+
         size_mb = file_size_mb(result.path)
         if size_mb > MAX_FILE_MB:
             await fail(t(lang, "too_big", size=f"{size_mb:.0f}", limit=MAX_FILE_MB))

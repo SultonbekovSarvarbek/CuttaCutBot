@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import uuid
 from dataclasses import dataclass
@@ -267,20 +268,78 @@ async def make_video_note(video_path: Path, timeout: int = 180) -> Path | None:
     return note_path
 
 
-async def make_vertical(video_path: Path, timeout: int = 300) -> Path | None:
-    """Обрезает клип по центру до вертикального формата 9:16 (под телефон).
+def _drawtext(text: str) -> str:
+    """ffmpeg-фильтр drawtext: полупрозрачная подпись в правом нижнем углу.
 
-    Из горизонтального кадра остаётся центральная вертикальная полоса —
-    как в Shorts/Reels. Стороны округляются до чётных (требование libx264).
+    Текст заранее чистится от символов, которые ломают синтаксис фильтра
+    (кавычки, двоеточия и т.п.) — для @username и простых надписей этого
+    достаточно. Шрифт берётся системный через fontconfig.
+    """
+    safe = re.sub(r"[^0-9A-Za-zА-Яа-яЁё_@ .\-]", "", text)
+    return (
+        f"drawtext=text='{safe}':x=w-tw-12:y=h-th-12:"
+        "fontsize=h/24:fontcolor=white@0.65:"
+        "shadowcolor=black@0.6:shadowx=1:shadowy=1"
+    )
+
+
+async def add_watermark(
+    video_path: Path, text: str, timeout: int = 300
+) -> Path | None:
+    """Накладывает текстовый водяной знак на клип (кладёт файл рядом).
+
+    Видео перекодируется, аудиодорожка копируется как есть.
     Возвращает путь к готовому mp4 либо None при ошибке.
     """
-    vertical_path = video_path.with_name("vertical.mp4")
-    crop = "crop='2*floor(min(iw,ih*9/16)/2)':'2*floor(min(ih,iw*16/9)/2)'"
+    marked_path = video_path.with_name("marked.mp4")
     cmd = [
         "ffmpeg",
         "-y",
         "-i", str(video_path),
-        "-vf", crop,
+        "-vf", _drawtext(text),
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        str(marked_path),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return None
+
+    if proc.returncode != 0 or not marked_path.exists():
+        return None
+    return marked_path
+
+
+async def make_vertical(
+    video_path: Path, watermark: str | None = None, timeout: int = 300
+) -> Path | None:
+    """Обрезает клип по центру до вертикального формата 9:16 (под телефон).
+
+    Из горизонтального кадра остаётся центральная вертикальная полоса —
+    как в Shorts/Reels. Стороны округляются до чётных (требование libx264).
+    watermark — текст водяного знака (None = без знака).
+    Возвращает путь к готовому mp4 либо None при ошибке.
+    """
+    vertical_path = video_path.with_name("vertical.mp4")
+    vf = "crop='2*floor(min(iw,ih*9/16)/2)':'2*floor(min(ih,iw*16/9)/2)'"
+    if watermark:
+        vf += "," + _drawtext(watermark)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(video_path),
+        "-vf", vf,
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "23",

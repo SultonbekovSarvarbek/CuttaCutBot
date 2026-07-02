@@ -304,16 +304,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "en": "❌ The audio has expired — cut the clip again.",
         "uz": "❌ Audio eskirgan — parchani qaytadan keseng.",
     },
-    "recognizing_music": {
-        "ru": "🎶 Слушаю, что за музыка…",
-        "en": "🎶 Listening for the music…",
-        "uz": "🎶 Qanday musiqa ekanini aniqlayapman…",
-    },
-    "music_found": {
-        "ru": "🎶 В клипе звучит: {track}",
-        "en": "🎶 Music in the clip: {track}",
-        "uz": "🎶 Klipdagi musiqa: {track}",
-    },
     "extracting_audio": {
         "ru": "🎵 Извлекаю аудио…",
         "en": "🎵 Extracting the audio…",

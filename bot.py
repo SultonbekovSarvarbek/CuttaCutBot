@@ -48,7 +48,6 @@ from aiogram.types import (
 
 import premium
 import stats
-from music import recognize_music
 from downloader import (
     TMP_ROOT,
     add_watermark,
@@ -172,26 +171,6 @@ def _purge_old_audio() -> None:
             item.path.unlink(missing_ok=True)
             pending_audio.pop(token, None)
 
-
-async def announce_music(
-    message: Message, lang: str, audio_path: Path, user_id: int
-) -> None:
-    """Распознаёт музыку в аудио и присылает название трека.
-
-    Молчит, если трек не нашёлся или Shazam недоступен.
-    """
-    match = await recognize_music(audio_path)
-    if match is None:
-        return
-    track = _escape(
-        f"{match.artist} — {match.title}" if match.artist else match.title
-    )
-    track = f'<a href="{match.url}">{track}</a>' if match.url else f"<b>{track}</b>"
-    await message.answer(
-        t(lang, "music_found", track=track),
-        disable_web_page_preview=True,
-    )
-    logger.info("Music found: user=%s %s — %s", user_id, match.artist, match.title)
 
 # Ограничитель одновременных скачиваний (yt-dlp + ffmpeg — тяжёлые процессы).
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
@@ -936,8 +915,6 @@ async def handle_quality(callback: CallbackQuery) -> None:
                 caption=f"🎵 {title_caption}" if title_caption else None,
                 title=title or clip_range,
             )
-            await status.edit_text(t(lang, "recognizing_music"))
-            await announce_music(callback.message, lang, audio_path, user_id)
             await status.edit_text(t(lang, "done"))
             stats.track(user_id, "download_ok")
             logger.info("Audio sent OK: user=%s", user_id)
@@ -1068,11 +1045,6 @@ async def handle_quality(callback: CallbackQuery) -> None:
             caption=f"✂️ {title_caption}" if title_caption else None,
             reply_markup=audio_kb,
         )
-
-        # Распознаём музыку в клипе (Shazam) — молчим, если не нашлось.
-        if audio_path:
-            await status.edit_text(t(lang, "recognizing_music"))
-            await announce_music(callback.message, lang, audio_path, user_id)
 
         await status.edit_text(t(lang, "done"))
         stats.track(user_id, "download_ok")
